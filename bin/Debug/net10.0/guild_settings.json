@@ -1,0 +1,37 @@
+{
+  "790282529403437075": {
+    "GuildId": 790282529403437075,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "1486178596765565009": {
+    "GuildId": 1486178596765565009,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "887050719075643443": {
+    "GuildId": 887050719075643443,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "1080022001588113408": {
+    "GuildId": 1080022001588113408,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "1342797303332995176": {
+    "GuildId": 1342797303332995176,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "1377715233157677146": {
+    "GuildId": 1377715233157677146,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  },
+  "942333713642049567": {
+    "GuildId": 942333713642049567,
+    "Enabled": true,
+    "WhitelistedChannelIds": []
+  }
+}
