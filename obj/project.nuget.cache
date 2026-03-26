@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "P4jzDYem5uQ=",
+  "dgSpecHash": "E2Kv8dTMVbM=",
   "success": true,
   "projectFilePath": "C:\\Discordbot\\DiscordBot.csproj",
   "expectedPackageFiles": [
@@ -12,9 +12,9 @@
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.websocket\\3.19.1\\discord.net.websocket.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.api.gax\\4.12.1\\google.api.gax.4.12.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.api.gax.rest\\4.12.1\\google.api.gax.rest.4.12.1.nupkg.sha512",
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis\\1.72.0\\google.apis.1.72.0.nupkg.sha512",
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis.auth\\1.72.0\\google.apis.auth.1.72.0.nupkg.sha512",
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis.core\\1.72.0\\google.apis.core.1.72.0.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis\\1.73.0\\google.apis.1.73.0.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis.auth\\1.73.0\\google.apis.auth.1.73.0.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis.core\\1.73.0\\google.apis.core.1.73.0.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.apis.translate.v2\\1.68.0.875\\google.apis.translate.v2.1.68.0.875.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\google.cloud.translation.v2\\3.5.0\\google.cloud.translation.v2.3.5.0.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\microsoft.bcl.asyncinterfaces\\6.0.0\\microsoft.bcl.asyncinterfaces.6.0.0.nupkg.sha512",

@@ -58,6 +58,10 @@
               "target": "Package",
               "version": "[3.19.1, )"
             },
+            "Google.Apis.Auth": {
+              "target": "Package",
+              "version": "[1.73.0, )"
+            },
             "Google.Cloud.Translation.V2": {
               "target": "Package",
               "version": "[3.5.0, )"

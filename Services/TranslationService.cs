@@ -1,4 +1,5 @@
 ﻿using Google.Cloud.Translation.V2;
+using Google.Apis.Auth.OAuth2;
 
 namespace ApolloBot.Services
 {
@@ -18,11 +19,24 @@ namespace ApolloBot.Services
         {
             try
             {
-                _client = TranslationClient.Create();
+                var credentialsJson = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+
+                if (string.IsNullOrWhiteSpace(credentialsJson))
+                {
+                    Console.WriteLine("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON is missing.");
+                    return;
+                }
+
+                credentialsJson = credentialsJson.Replace("\\n", "\n");
+
+                var credential = GoogleCredential.FromJson(credentialsJson);
+                _client = TranslationClient.Create(credential);
+
+                Console.WriteLine("✅ Google Translate client initialized successfully.");
             }
-            catch
+            catch (Exception ex)
             {
-                Console.WriteLine("⚠️ Google Translate not configured yet.");
+                Console.WriteLine($"⚠️ Google Translate not configured yet: {ex.Message}");
             }
         }
 
