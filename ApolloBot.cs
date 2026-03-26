@@ -23,7 +23,6 @@ class Program
     private readonly Random _random = new();
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
-    private const string BotStatsStateFilePath = "bot_stats_state.json";
     private readonly TranslationService _translationService = new();
 
     // Use your test server ID for fast slash command registration.
@@ -73,9 +72,19 @@ class Program
     private readonly Dictionary<(ulong MessageId, ulong UserId), DateTime> _cooldowns = new();
     private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
 
-    private const string StateFilePath = "relay_states.json";
-    private const string GuildSettingsFilePath = "guild_settings.json";
     private const string WebhookName = "Apollo Bot Relay";
+
+    private static readonly string DataDirectory =
+    Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "data";
+
+    private static readonly string BotStatsStateFilePath =
+        Path.Combine(DataDirectory, "bot_stats_state.json");
+
+    private static readonly string StateFilePath =
+        Path.Combine(DataDirectory, "relay_states.json");
+
+    private static readonly string GuildSettingsFilePath =
+        Path.Combine(DataDirectory, "guild_settings.json");
 
     private static readonly HashSet<ulong> BotOwnerIds = new()
     {
@@ -91,6 +100,7 @@ class Program
 
     public async Task MainAsync()
     {
+        Directory.CreateDirectory(DataDirectory);
         LoadRelayStates();
         LoadGuildSettings();
         LoadBotStatsState();
