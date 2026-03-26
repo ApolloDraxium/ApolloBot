@@ -253,8 +253,6 @@ class Program
                     $"channel '#{textChannel.Name}': {string.Join(", ", missing)}");
             }
 
-            await message.DeleteAsync();
-
             RestWebhook? webhook = await GetOrCreateWebhookAsync(textChannel);
             if (webhook == null)
                 return;
@@ -289,6 +287,8 @@ class Program
             };
 
             SaveRelayStates();
+
+            await message.DeleteAsync();
         }
         catch (Exception ex)
         {
@@ -412,7 +412,6 @@ class Program
 
         await channel.SendMessageAsync(embed: embed);
     }
-
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
     {
         string raw = message.Content.Trim();
@@ -933,7 +932,6 @@ class Program
         result.Total = total + request.Modifier;
         return result;
     }
-
     private async Task ButtonExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
@@ -1210,10 +1208,10 @@ class Program
     {
         var builder = new ComponentBuilder();
 
-        foreach (string platform in platforms)
+        foreach (string platform in platforms.Distinct())
         {
             builder.WithButton(
-                label: "Embed Broken",
+                label: GetButtonLabel(platform),
                 customId: $"cycle_{platform}",
                 style: ButtonStyle.Danger);
         }
@@ -1224,6 +1222,18 @@ class Program
             style: ButtonStyle.Secondary);
 
         return builder.Build();
+    }
+
+    private string GetButtonLabel(string platform)
+    {
+        return platform switch
+        {
+            "twitter" => "Fix Twitter/X",
+            "reddit" => "Fix Reddit",
+            "tiktok" => "Fix TikTok",
+            "instagram" => "Fix Instagram",
+            _ => "Fix Embed"
+        };
     }
 
     private string FormatPlatformName(string platform)
