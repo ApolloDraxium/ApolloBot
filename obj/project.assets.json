@@ -2,17 +2,6 @@
   "version": 3,
   "targets": {
     "net10.0": {
-      "Discord.Net/3.19.1": {
-        "type": "package",
-        "dependencies": {
-          "Discord.Net.Commands": "3.19.1",
-          "Discord.Net.Core": "3.19.1",
-          "Discord.Net.Interactions": "3.19.1",
-          "Discord.Net.Rest": "3.19.1",
-          "Discord.Net.WebSocket": "3.19.1",
-          "Discord.Net.Webhook": "3.19.1"
-        }
-      },
       "Discord.Net.Commands/3.19.1": {
         "type": "package",
         "dependencies": {
@@ -59,20 +48,130 @@
           }
         }
       },
-      "Discord.Net.Interactions/3.19.1": {
+      "Discord.Net.Rest/3.19.1": {
         "type": "package",
         "dependencies": {
-          "Discord.Net.Core": "3.19.1",
-          "Discord.Net.Rest": "3.19.1",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
+          "Discord.Net.Core": "3.19.1"
         },
         "compile": {
-          "lib/net10.0/Discord.Net.Interactions.dll": {
+          "lib/net10.0/Discord.Net.Rest.dll": {
             "related": ".xml"
           }
         },
         "runtime": {
-          "lib/net10.0/Discord.Net.Interactions.dll": {
+          "lib/net10.0/Discord.Net.Rest.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Discord.Net.Webhook/3.19.1": {
+        "type": "package",
+        "dependencies": {
+          "Discord.Net.Core": "3.19.1",
+          "Discord.Net.Rest": "3.19.1"
+        },
+        "compile": {
+          "lib/net10.0/Discord.Net.Webhook.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Discord.Net.Webhook.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Discord.Net.WebSocket/3.19.1": {
+        "type": "package",
+        "dependencies": {
+          "Discord.Net.Core": "3.19.1",
+          "Discord.Net.Dave": "3.19.1",
+          "Discord.Net.Rest": "3.19.1"
+        },
+        "compile": {
+          "lib/net10.0/Discord.Net.WebSocket.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Discord.Net.WebSocket.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions/10.0.0": {
+        "type": "package",
+        "compile": {
+          "lib/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "buildTransitive/net8.0/_._": {}
+        }
+      },
+      "Newtonsoft.Json/13.0.4": {
+        "type": "package",
+        "compile": {
+          "lib/net6.0/Newtonsoft.Json.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net6.0/Newtonsoft.Json.dll": {
+            "related": ".xml"
+          }
+        }
+      }
+    },
+    "net10.0/linux-x64": {
+      "Discord.Net.Commands/3.19.1": {
+        "type": "package",
+        "dependencies": {
+          "Discord.Net.Core": "3.19.1",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
+        },
+        "compile": {
+          "lib/net10.0/Discord.Net.Commands.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Discord.Net.Commands.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Discord.Net.Core/3.19.1": {
+        "type": "package",
+        "dependencies": {
+          "Newtonsoft.Json": "13.0.4"
+        },
+        "compile": {
+          "lib/net10.0/Discord.Net.Core.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Discord.Net.Core.dll": {
+            "related": ".xml"
+          }
+        }
+      },
+      "Discord.Net.Dave/3.19.1": {
+        "type": "package",
+        "compile": {
+          "lib/net10.0/Discord.Net.Dave.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net10.0/Discord.Net.Dave.dll": {
             "related": ".xml"
           }
         }
@@ -160,19 +259,6 @@
     }
   },
   "libraries": {
-    "Discord.Net/3.19.1": {
-      "sha512": "TRMz/EWsUIq+JMkYi2nGZtTUC4gd3HHy+wZxM0/+8RbFEdxQ7hWXYh1ZXY8SAfyIzBscG31/AeXbppXy7i7vXA==",
-      "type": "package",
-      "path": "discord.net/3.19.1",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "NUGET_README.md",
-        "PackageLogo.png",
-        "discord.net.3.19.1.nupkg.sha512",
-        "discord.net.nuspec"
-      ]
-    },
     "Discord.Net.Commands/3.19.1": {
       "sha512": "QXBuWddF8xgTJknaPNC0FL4qDjHVrLjZRw8y8YQ2IkhYVaX60CzV3LT0w2HJ/uMteafSxgWDoi51Ncz2yVFzJQ==",
       "type": "package",
@@ -228,25 +314,6 @@
         "lib/net8.0/Discord.Net.Dave.xml",
         "lib/net9.0/Discord.Net.Dave.dll",
         "lib/net9.0/Discord.Net.Dave.xml"
-      ]
-    },
-    "Discord.Net.Interactions/3.19.1": {
-      "sha512": "NTetS0nUHWihk07Yg+sACccF833NrRznJLMkouWLr69aukIUVjvp53c90AXvBpXEnaCjBMP8EY0HfWDmMGNpTg==",
-      "type": "package",
-      "path": "discord.net.interactions/3.19.1",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "NUGET_README.md",
-        "PackageLogo.png",
-        "discord.net.interactions.3.19.1.nupkg.sha512",
-        "discord.net.interactions.nuspec",
-        "lib/net10.0/Discord.Net.Interactions.dll",
-        "lib/net10.0/Discord.Net.Interactions.xml",
-        "lib/net8.0/Discord.Net.Interactions.dll",
-        "lib/net8.0/Discord.Net.Interactions.xml",
-        "lib/net9.0/Discord.Net.Interactions.dll",
-        "lib/net9.0/Discord.Net.Interactions.xml"
       ]
     },
     "Discord.Net.Rest/3.19.1": {
@@ -370,8 +437,9 @@
   },
   "projectFileDependencyGroups": {
     "net10.0": [
-      "Discord.Net >= 3.19.1",
-      "Discord.Net.WebSocket >= 3.19.1"
+      "Discord.Net.Commands >= 3.19.1",
+      "Discord.Net.WebSocket >= 3.19.1",
+      "Discord.Net.Webhook >= 3.19.1"
     ]
   },
   "packageFolders": {
@@ -380,11 +448,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj",
+      "projectUniqueName": "C:\\Discordbot\\DiscordBot.csproj",
       "projectName": "DiscordBot",
-      "projectPath": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj",
+      "projectPath": "C:\\Discordbot\\DiscordBot.csproj",
       "packagesPath": "C:\\Users\\Apollo's PC\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\obj\\",
+      "outputPath": "C:\\Discordbot\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Apollo's PC\\AppData\\Roaming\\NuGet\\NuGet.Config",
@@ -419,11 +487,15 @@
       "net10.0": {
         "targetAlias": "net10.0",
         "dependencies": {
-          "Discord.Net": {
+          "Discord.Net.Commands": {
             "target": "Package",
             "version": "[3.19.1, )"
           },
           "Discord.Net.WebSocket": {
+            "target": "Package",
+            "version": "[3.19.1, )"
+          },
+          "Discord.Net.Webhook": {
             "target": "Package",
             "version": "[3.19.1, )"
           }
@@ -439,6 +511,20 @@
         ],
         "assetTargetFallback": true,
         "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+            "version": "[10.0.5, 10.0.5]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.linux-x64",
+            "version": "[10.0.5, 10.0.5]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Runtime.linux-x64",
+            "version": "[10.0.5, 10.0.5]"
+          }
+        ],
         "frameworkReferences": {
           "Microsoft.NETCore.App": {
             "privateAssets": "all"
@@ -719,6 +805,11 @@
           "System.Xml.XPath": "(,4.3.32767]",
           "System.Xml.XPath.XDocument": "(,5.0.32767]"
         }
+      }
+    },
+    "runtimes": {
+      "linux-x64": {
+        "#import": []
       }
     }
   }

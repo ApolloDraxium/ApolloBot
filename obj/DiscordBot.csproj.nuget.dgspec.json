@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj": {}
+    "C:\\Discordbot\\DiscordBot.csproj": {}
   },
   "projects": {
-    "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj": {
+    "C:\\Discordbot\\DiscordBot.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj",
+        "projectUniqueName": "C:\\Discordbot\\DiscordBot.csproj",
         "projectName": "DiscordBot",
-        "projectPath": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj",
+        "projectPath": "C:\\Discordbot\\DiscordBot.csproj",
         "packagesPath": "C:\\Users\\Apollo's PC\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\obj\\",
+        "outputPath": "C:\\Discordbot\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Apollo's PC\\AppData\\Roaming\\NuGet\\NuGet.Config",
@@ -46,11 +46,15 @@
         "net10.0": {
           "targetAlias": "net10.0",
           "dependencies": {
-            "Discord.Net": {
+            "Discord.Net.Commands": {
               "target": "Package",
               "version": "[3.19.1, )"
             },
             "Discord.Net.WebSocket": {
+              "target": "Package",
+              "version": "[3.19.1, )"
+            },
+            "Discord.Net.Webhook": {
               "target": "Package",
               "version": "[3.19.1, )"
             }
@@ -66,6 +70,20 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+              "version": "[10.0.5, 10.0.5]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.linux-x64",
+              "version": "[10.0.5, 10.0.5]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.linux-x64",
+              "version": "[10.0.5, 10.0.5]"
+            }
+          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
@@ -346,6 +364,11 @@
             "System.Xml.XPath": "(,4.3.32767]",
             "System.Xml.XPath.XDocument": "(,5.0.32767]"
           }
+        }
+      },
+      "runtimes": {
+        "linux-x64": {
+          "#import": []
         }
       }
     }

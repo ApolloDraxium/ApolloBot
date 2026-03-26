@@ -1,19 +1,20 @@
 {
   "version": 2,
-  "dgSpecHash": "Ryp7MfLzTKc=",
+  "dgSpecHash": "GynxB/xethA=",
   "success": true,
-  "projectFilePath": "C:\\Users\\Apollo's PC\\source\\repos\\DiscordBot\\DiscordBot\\DiscordBot.csproj",
+  "projectFilePath": "C:\\Discordbot\\DiscordBot.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net\\3.19.1\\discord.net.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.commands\\3.19.1\\discord.net.commands.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.core\\3.19.1\\discord.net.core.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.dave\\3.19.1\\discord.net.dave.3.19.1.nupkg.sha512",
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.interactions\\3.19.1\\discord.net.interactions.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.rest\\3.19.1\\discord.net.rest.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.webhook\\3.19.1\\discord.net.webhook.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\discord.net.websocket\\3.19.1\\discord.net.websocket.3.19.1.nupkg.sha512",
     "C:\\Users\\Apollo's PC\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\10.0.0\\microsoft.extensions.dependencyinjection.abstractions.10.0.0.nupkg.sha512",
-    "C:\\Users\\Apollo's PC\\.nuget\\packages\\newtonsoft.json\\13.0.4\\newtonsoft.json.13.0.4.nupkg.sha512"
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\newtonsoft.json\\13.0.4\\newtonsoft.json.13.0.4.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\microsoft.netcore.app.runtime.linux-x64\\10.0.5\\microsoft.netcore.app.runtime.linux-x64.10.0.5.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.linux-x64\\10.0.5\\microsoft.aspnetcore.app.runtime.linux-x64.10.0.5.nupkg.sha512",
+    "C:\\Users\\Apollo's PC\\.nuget\\packages\\microsoft.netcore.app.host.linux-x64\\10.0.5\\microsoft.netcore.app.host.linux-x64.10.0.5.nupkg.sha512"
   ],
   "logs": []
 }
