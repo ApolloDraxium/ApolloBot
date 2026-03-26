@@ -237,6 +237,7 @@ class Program
             await HandleApolloBotCommand(userMessage, textChannel);
             return;
         }
+        await NotifyOriginalAuthorOfReplyAsync(userMessage, textChannel);
 
         GuildSettings translationSettings = GetOrCreateGuildSettings(textChannel.Guild.Id);
 
@@ -1311,13 +1312,20 @@ class Program
     private GuildSettings GetOrCreateGuildSettings(ulong guildId)
     {
         if (_guildSettings.TryGetValue(guildId, out GuildSettings? existing))
+        {
+            if (string.IsNullOrWhiteSpace(existing.TargetLanguage))
+                existing.TargetLanguage = "en";
+
             return existing;
+        }
 
         var created = new GuildSettings
         {
             GuildId = guildId,
             Enabled = true,
-            WhitelistedChannelIds = new List<ulong>()
+            WhitelistedChannelIds = new List<ulong>(),
+            AutoTranslateEnabled = false,
+            TargetLanguage = "en"
         };
 
         _guildSettings[guildId] = created;
@@ -2019,30 +2027,6 @@ class RelayMessageState
     public Dictionary<string, int> ProviderIndexes { get; set; } = new();
 }
 
-private GuildSettings GetOrCreateGuildSettings(ulong guildId)
-{
-    if (_guildSettings.TryGetValue(guildId, out GuildSettings? existing))
-    {
-        if (string.IsNullOrWhiteSpace(existing.TargetLanguage))
-            existing.TargetLanguage = "en";
-
-        return existing;
-    }
-
-    var created = new GuildSettings
-    {
-        GuildId = guildId,
-        Enabled = true,
-        WhitelistedChannelIds = new List<ulong>(),
-        AutoTranslateEnabled = false,
-        TargetLanguage = "en"
-    };
-
-    _guildSettings[guildId] = created;
-    SaveGuildSettings();
-    return created;
-}
-
 class RollRequest
 {
     public int DiceCount { get; set; }
@@ -2080,4 +2064,14 @@ class PublicStatsPayload
     public int TotalUsers { get; set; }
     public string Uptime { get; set; } = "";
     public int PlatformCount { get; set; }
+}
+
+class GuildSettings
+{
+    public ulong GuildId { get; set; }
+    public bool Enabled { get; set; } = true;
+    public List<ulong> WhitelistedChannelIds { get; set; } = new();
+
+    public bool AutoTranslateEnabled { get; set; } = false;
+    public string TargetLanguage { get; set; } = "en";
 }
