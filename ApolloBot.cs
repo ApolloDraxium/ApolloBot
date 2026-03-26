@@ -127,6 +127,9 @@ class Program
         Console.WriteLine($"Loaded {_relayStates.Count} persisted relay state(s).");
         Console.WriteLine($"Loaded {_guildSettings.Count} guild setting profile(s).");
 
+        if (_client != null)
+            await _client.SetActivityAsync(new Game("Running 24/7", ActivityType.Watching));
+
         if (!_slashCommandsRegistered)
         {
             await RegisterSlashCommandsAsync();
