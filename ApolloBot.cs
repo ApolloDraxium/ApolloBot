@@ -6,6 +6,7 @@ using Discord.Net;
 using Discord.Rest;
 using Discord.Webhook;
 using Discord.WebSocket;
+using ApolloBot.Services;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,6 +23,7 @@ class Program
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
     private const string BotStatsStateFilePath = "bot_stats_state.json";
+    private readonly TranslationService _translationService = new();
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -228,6 +230,41 @@ class Program
         {
             await HandleApolloBotCommand(userMessage, textChannel);
             return;
+        }
+
+        if (content.StartsWith("!ab", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleApolloBotCommand(userMessage, textChannel);
+            return;
+        }
+
+        GuildSettings translationSettings = GetOrCreateGuildSettings(textChannel.Guild.Id);
+
+        if (translationSettings.AutoTranslateEnabled)
+        {
+            var autoTranslateResult = await _translationService.TranslateAsync(
+                userMessage.Content,
+                translationSettings.TargetLanguage);
+
+            if (autoTranslateResult != null &&
+                !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                string translated = autoTranslateResult.TranslatedText;
+                if (translated.Length > 4000)
+                    translated = translated[..4000];
+
+                var embed = new EmbedBuilder()
+                    .WithTitle("🌍 Auto Translation")
+                    .WithDescription(translated)
+                    .AddField("Author", message.Author.Mention, true)
+                    .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
+                    .AddField("Target", autoTranslateResult.TargetLanguage, true)
+                    .WithColor(Color.Green)
+                    .Build();
+
+                await textChannel.SendMessageAsync(embed: embed);
+            }
         }
 
         if (content.StartsWith("!ab", StringComparison.OrdinalIgnoreCase))
@@ -493,6 +530,20 @@ class Program
             return;
         }
 
+        if (sub == "language")
+        {
+            await textChannel.SendMessageAsync(
+                $"🌍 Server target language: `{settings.TargetLanguage}`\n" +
+                $"🔁 Auto-translate: **{(settings.AutoTranslateEnabled ? "ON" : "OFF")}**");
+            return;
+        }
+
+        if (sub == "translate")
+        {
+            await HandleTranslateCommand(message, textChannel, settings, parts);
+            return;
+        }
+
         if (message.Author is not SocketGuildUser guildUser || !guildUser.GuildPermissions.ManageGuild)
         {
             await textChannel.SendMessageAsync("You need **Manage Server** to use that command.");
@@ -512,6 +563,54 @@ class Program
             settings.Enabled = false;
             SaveGuildSettings();
             await textChannel.SendMessageAsync("Embed fixer is now **disabled** for this server.");
+            return;
+        }
+
+        if (sub == "setlanguage")
+        {
+            if (parts.Length < 2)
+            {
+                await textChannel.SendMessageAsync("Usage: `!ab setlanguage <language>`");
+                return;
+            }
+
+            string languageInput = string.Join(' ', parts.Skip(1));
+            string languageCode = _translationService.NormalizeLanguageCode(languageInput);
+
+            settings.TargetLanguage = languageCode;
+            SaveGuildSettings();
+
+            await textChannel.SendMessageAsync($"🌍 Server translation language set to `{languageCode}`");
+            return;
+        }
+
+        if (sub == "autotranslate")
+        {
+            if (parts.Length < 2)
+            {
+                await textChannel.SendMessageAsync("Usage: `!ab autotranslate on` or `!ab autotranslate off`");
+                return;
+            }
+
+            string mode = parts[1].ToLowerInvariant();
+
+            if (mode == "on")
+            {
+                settings.AutoTranslateEnabled = true;
+                SaveGuildSettings();
+                await textChannel.SendMessageAsync($"🔁 Auto-translation is now **ON** to `{settings.TargetLanguage}`");
+                return;
+            }
+
+            if (mode == "off")
+            {
+                settings.AutoTranslateEnabled = false;
+                SaveGuildSettings();
+                await textChannel.SendMessageAsync("🔁 Auto-translation is now **OFF**");
+                return;
+            }
+
+            await textChannel.SendMessageAsync("Usage: `!ab autotranslate on` or `!ab autotranslate off`");
             return;
         }
 
@@ -538,6 +637,9 @@ class Program
                 "`!ab providers` – Show providers\n" +
                 "`!ab perms` – Check permissions\n" +
                 "`!ab status` – Server settings\n" +
+                "`!ab translate <text>` – Translate text to server language\n" +
+                "`!ab translate to <language> <text>` – Translate to a chosen language\n" +
+                "`!ab language` – Show translation language\n" +
                 "`/roll` – Roll dice", false);
 
         if (isAdmin)
@@ -548,6 +650,9 @@ class Program
                 "`!ab whitelist add #channel`\n" +
                 "`!ab whitelist remove #channel`\n" +
                 "`!ab whitelist list`\n" +
+                "`!ab setlanguage <language>`\n" +
+                "`!ab autotranslate on`\n" +
+                "`!ab autotranslate off`\n" +
                 "`!ab whitelist clear`", false);
         }
 
@@ -599,6 +704,113 @@ class Program
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task HandleTranslateCommand(
+    SocketUserMessage message,
+    SocketTextChannel textChannel,
+    GuildSettings settings,
+    string[] parts)
+    {
+        string targetLanguage = settings.TargetLanguage;
+        string textToTranslate = "";
+
+        if (parts.Length >= 3 && parts[1].Equals("to", StringComparison.OrdinalIgnoreCase))
+        {
+            if (parts.Length < 4)
+            {
+                if (message.Reference?.MessageId.IsSpecified == true)
+                {
+                    string? replyText = await TryGetReferencedMessageContentAsync(message, textChannel);
+                    if (string.IsNullOrWhiteSpace(replyText))
+                    {
+                        await textChannel.SendMessageAsync("I couldn't find any replied-to message content to translate.");
+                        return;
+                    }
+
+                    targetLanguage = _translationService.NormalizeLanguageCode(parts[2]);
+                    textToTranslate = replyText;
+                }
+                else
+                {
+                    await textChannel.SendMessageAsync("Usage: `!ab translate to <language> <text>` or reply with `!ab translate to <language>`");
+                    return;
+                }
+            }
+            else
+            {
+                targetLanguage = _translationService.NormalizeLanguageCode(parts[2]);
+                textToTranslate = string.Join(' ', parts.Skip(3));
+            }
+        }
+        else
+        {
+            if (parts.Length >= 2)
+            {
+                textToTranslate = string.Join(' ', parts.Skip(1));
+            }
+            else if (message.Reference?.MessageId.IsSpecified == true)
+            {
+                string? replyText = await TryGetReferencedMessageContentAsync(message, textChannel);
+                if (string.IsNullOrWhiteSpace(replyText))
+                {
+                    await textChannel.SendMessageAsync("I couldn't find any replied-to message content to translate.");
+                    return;
+                }
+
+                textToTranslate = replyText;
+            }
+            else
+            {
+                await textChannel.SendMessageAsync(
+                    "Usage:\n" +
+                    "`!ab translate <text>`\n" +
+                    "`!ab translate to <language> <text>`\n" +
+                    "or reply to a message with `!ab translate`");
+                return;
+            }
+        }
+
+        var result = await _translationService.TranslateAsync(textToTranslate, targetLanguage);
+
+        if (result == null)
+        {
+            await textChannel.SendMessageAsync("⚠️ Translation not available right now. Google credentials may not be configured yet.");
+            return;
+        }
+
+        string translated = result.TranslatedText;
+        if (translated.Length > 4000)
+            translated = translated[..4000];
+
+        var embed = new EmbedBuilder()
+            .WithTitle("🌍 Translation")
+            .WithDescription(translated)
+            .AddField("Detected Language", result.DetectedSourceLanguage, true)
+            .AddField("Target Language", result.TargetLanguage, true)
+            .WithColor(Color.Blue)
+            .WithCurrentTimestamp()
+            .Build();
+
+        await textChannel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task<string?> TryGetReferencedMessageContentAsync(SocketUserMessage message, SocketTextChannel channel)
+    {
+        try
+        {
+            if (message.Reference?.MessageId.IsSpecified != true)
+                return null;
+
+            ulong referencedMessageId = message.Reference.MessageId.Value;
+            IMessage referencedMessage = await channel.GetMessageAsync(referencedMessageId);
+
+            return referencedMessage?.Content;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task HandleWhitelistCommand(SocketUserMessage message, SocketTextChannel textChannel, GuildSettings settings, string[] parts)
@@ -1760,11 +1972,28 @@ class RelayMessageState
     public Dictionary<string, int> ProviderIndexes { get; set; } = new();
 }
 
-class GuildSettings
+private GuildSettings GetOrCreateGuildSettings(ulong guildId)
 {
-    public ulong GuildId { get; set; }
-    public bool Enabled { get; set; } = true;
-    public List<ulong> WhitelistedChannelIds { get; set; } = new();
+    if (_guildSettings.TryGetValue(guildId, out GuildSettings? existing))
+    {
+        if (string.IsNullOrWhiteSpace(existing.TargetLanguage))
+            existing.TargetLanguage = "en";
+
+        return existing;
+    }
+
+    var created = new GuildSettings
+    {
+        GuildId = guildId,
+        Enabled = true,
+        WhitelistedChannelIds = new List<ulong>(),
+        AutoTranslateEnabled = false,
+        TargetLanguage = "en"
+    };
+
+    _guildSettings[guildId] = created;
+    SaveGuildSettings();
+    return created;
 }
 
 class RollRequest
