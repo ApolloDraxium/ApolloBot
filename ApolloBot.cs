@@ -1757,6 +1757,53 @@ class Program
         }
     }
 
+    private async Task NotifyOriginalAuthorOfReplyAsync(SocketUserMessage replyMessage, SocketTextChannel textChannel)
+    {
+        try
+        {
+            if (replyMessage.Reference?.MessageId.IsSpecified != true)
+                return;
+
+            ulong referencedMessageId = replyMessage.Reference.MessageId.Value;
+
+            if (!_relayStates.TryGetValue(referencedMessageId, out RelayMessageState? relayState))
+                return;
+
+            if (replyMessage.Author.Id == relayState.OriginalAuthorId)
+                return;
+
+            IUser? originalAuthor = textChannel.Guild.GetUser(relayState.OriginalAuthorId);
+            if (originalAuthor == null)
+                return;
+
+            string jumpUrl = $"https://discord.com/channels/{textChannel.Guild.Id}/{textChannel.Id}/{replyMessage.Id}";
+            string replierName = replyMessage.Author.GlobalName ?? replyMessage.Author.Username;
+
+            AllowedMentions mentions = new AllowedMentions(AllowedMentionTypes.Users);
+            mentions.UserIds = new List<ulong> { relayState.OriginalAuthorId };
+
+            IUserMessage pingMessage = await textChannel.SendMessageAsync(
+                text: $"{originalAuthor.Mention} **{replierName}** replied to your relayed message: {jumpUrl}",
+                allowedMentions: mentions);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(12));
+                    await pingMessage.DeleteAsync();
+                }
+                catch
+                {
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to notify original author about a reply: {ex}");
+        }
+    }
+
     private async Task StartStatsHttpServerAsync()
     {
         try
