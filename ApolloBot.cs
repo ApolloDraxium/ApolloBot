@@ -1791,3 +1791,17 @@ class RollParseResult
     public bool Success { get; set; }
     public RollRequest? Request { get; set; }
 }
+
+class BotStatsState
+{
+    public long EmbedsFixedCount { get; set; }
+}
+
+class PublicStatsPayload
+{
+    public long EmbedsFixed { get; set; }
+    public int ServerCount { get; set; }
+    public int TotalUsers { get; set; }
+    public string Uptime { get; set; } = "";
+    public int PlatformCount { get; set; }
+}
