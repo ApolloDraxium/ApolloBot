@@ -1,4 +1,7 @@
-﻿using Discord;
+﻿using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using Discord;
 using Discord.Net;
 using Discord.Rest;
 using Discord.Webhook;
@@ -17,6 +20,8 @@ class Program
     private DiscordSocketClient? _client;
     private readonly Random _random = new();
     private bool _slashCommandsRegistered = false;
+    private long _embedsFixedCount = 0;
+    private const string BotStatsStateFilePath = "bot_stats_state.json";
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -85,6 +90,7 @@ class Program
     {
         LoadRelayStates();
         LoadGuildSettings();
+        LoadBotStatsState();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
         {
@@ -110,6 +116,8 @@ class Program
 
         await _client.LoginAsync(TokenType.Bot, token);
         await _client.StartAsync();
+
+        _ = Task.Run(StartStatsHttpServerAsync);
 
         Console.WriteLine("Bot is running.");
         await Task.Delay(-1);
@@ -287,6 +295,7 @@ class Program
             };
 
             SaveRelayStates();
+            IncrementEmbedsFixedCount();
 
             await message.DeleteAsync();
         }
@@ -1476,6 +1485,203 @@ class Program
         {
             Console.WriteLine($"Failed to load relay states: {ex}");
         }
+    }
+
+    private void IncrementEmbedsFixedCount()
+    {
+        _embedsFixedCount++;
+        SaveBotStatsState();
+    }
+
+    private void SaveBotStatsState()
+    {
+        try
+        {
+            var state = new BotStatsState
+            {
+                EmbedsFixedCount = _embedsFixedCount
+            };
+
+            string json = JsonSerializer.Serialize(state, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(BotStatsStateFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save bot stats state: {ex}");
+        }
+    }
+
+    private void LoadBotStatsState()
+    {
+        try
+        {
+            if (!File.Exists(BotStatsStateFilePath))
+            {
+                Console.WriteLine("No bot stats state file found. Starting fresh.");
+                return;
+            }
+
+            string json = File.ReadAllText(BotStatsStateFilePath);
+
+            BotStatsState? loaded =
+                JsonSerializer.Deserialize<BotStatsState>(json);
+
+            if (loaded == null)
+            {
+                Console.WriteLine("Bot stats state file was empty or invalid. Starting fresh.");
+                return;
+            }
+
+            _embedsFixedCount = loaded.EmbedsFixedCount;
+            Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load bot stats state: {ex}");
+        }
+    }
+
+    private async Task StartStatsHttpServerAsync()
+    {
+        try
+        {
+            int port = 8080;
+
+            string? portValue = Environment.GetEnvironmentVariable("PORT");
+            if (!string.IsNullOrWhiteSpace(portValue) && int.TryParse(portValue, out int parsedPort))
+                port = parsedPort;
+
+            var listener = new TcpListener(IPAddress.Any, port);
+            listener.Start();
+
+            Console.WriteLine($"Stats HTTP server listening on port {port}");
+
+            while (true)
+            {
+                TcpClient client = await listener.AcceptTcpClientAsync();
+                _ = Task.Run(() => HandleStatsHttpClientAsync(client));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Stats HTTP server crashed: {ex}");
+        }
+    }
+
+    private async Task HandleStatsHttpClientAsync(TcpClient client)
+    {
+        using (client)
+        using (NetworkStream stream = client.GetStream())
+        using (var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true))
+        {
+            try
+            {
+                string? requestLine = await reader.ReadLineAsync();
+                if (string.IsNullOrWhiteSpace(requestLine))
+                    return;
+
+                string[] parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                string method = parts.Length > 0 ? parts[0] : "GET";
+                string path = parts.Length > 1 ? parts[1] : "/";
+
+                string? line;
+                do
+                {
+                    line = await reader.ReadLineAsync();
+                }
+                while (!string.IsNullOrEmpty(line));
+
+                if (method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteHttpResponseAsync(
+                        stream,
+                        "204 No Content",
+                        "text/plain; charset=utf-8",
+                        "");
+                    return;
+                }
+
+                if (path.StartsWith("/stats", StringComparison.OrdinalIgnoreCase))
+                {
+                    string json = BuildPublicStatsJson();
+
+                    await WriteHttpResponseAsync(
+                        stream,
+                        "200 OK",
+                        "application/json; charset=utf-8",
+                        json);
+
+                    return;
+                }
+
+                if (path == "/")
+                {
+                    await WriteHttpResponseAsync(
+                        stream,
+                        "200 OK",
+                        "text/plain; charset=utf-8",
+                        "ApolloBot stats endpoint is live. Use /stats");
+                    return;
+                }
+
+                await WriteHttpResponseAsync(
+                    stream,
+                    "404 Not Found",
+                    "application/json; charset=utf-8",
+                    "{\"error\":\"Not found\"}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to handle stats HTTP request: {ex}");
+            }
+        }
+    }
+
+    private async Task WriteHttpResponseAsync(NetworkStream stream, string status, string contentType, string body)
+    {
+        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+
+        string headers =
+            $"HTTP/1.1 {status}\r\n" +
+            $"Content-Type: {contentType}\r\n" +
+            $"Content-Length: {bodyBytes.Length}\r\n" +
+            $"Access-Control-Allow-Origin: *\r\n" +
+            $"Access-Control-Allow-Methods: GET, OPTIONS\r\n" +
+            $"Access-Control-Allow-Headers: Content-Type\r\n" +
+            $"Connection: close\r\n" +
+            $"\r\n";
+
+        byte[] headerBytes = Encoding.UTF8.GetBytes(headers);
+
+        await stream.WriteAsync(headerBytes, 0, headerBytes.Length);
+        await stream.WriteAsync(bodyBytes, 0, bodyBytes.Length);
+        await stream.FlushAsync();
+    }
+
+    private string BuildPublicStatsJson()
+    {
+        int serverCount = _client?.Guilds.Count ?? 0;
+        int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
+        TimeSpan uptime = DateTime.UtcNow - _startedAtUtc;
+
+        var payload = new PublicStatsPayload
+        {
+            EmbedsFixed = _embedsFixedCount,
+            ServerCount = serverCount,
+            TotalUsers = totalUsers,
+            Uptime = FormatDuration(uptime),
+            PlatformCount = _providers.Count
+        };
+
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = false
+        });
     }
 
     private void SaveGuildSettings()
