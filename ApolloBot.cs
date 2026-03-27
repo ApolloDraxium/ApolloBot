@@ -1733,18 +1733,15 @@ class Program
             if (replyMessage.Author.Id == relayState.OriginalAuthorId)
                 return;
 
-            IUser? originalAuthor = textChannel.Guild.GetUser(relayState.OriginalAuthorId);
-            if (originalAuthor == null)
-                return;
-
             string jumpUrl = $"https://discord.com/channels/{textChannel.Guild.Id}/{textChannel.Id}/{replyMessage.Id}";
             string replierName = replyMessage.Author.GlobalName ?? replyMessage.Author.Username;
+            string originalMention = $"<@{relayState.OriginalAuthorId}>";
 
-            var allowedMentions = new AllowedMentions(AllowedMentionTypes.Users);
+            var allowedMentions = AllowedMentions.None;
             allowedMentions.UserIds = new List<ulong> { relayState.OriginalAuthorId };
 
             IUserMessage pingMessage = await textChannel.SendMessageAsync(
-                text: $"{originalAuthor.Mention} **{replierName}** replied to your relayed message: {jumpUrl}",
+                text: $"{originalMention} **{replierName}** replied to your relayed message: {jumpUrl}",
                 allowedMentions: allowedMentions);
 
             _ = Task.Run(async () =>
