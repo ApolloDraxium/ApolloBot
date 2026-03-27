@@ -74,7 +74,7 @@ class Program
     private const string WebhookName = "Apollo Bot Relay";
 
     private static readonly string DataDirectory =
-    Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "data";
+        Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "data";
 
     private static readonly string BotStatsStateFilePath =
         Path.Combine(DataDirectory, "bot_stats_state.json");
@@ -247,6 +247,7 @@ class Program
             await HandleApolloBotCommand(userMessage, textChannel);
             return;
         }
+
         await NotifyOriginalAuthorOfReplyAsync(userMessage, textChannel);
 
         if (!ShouldProcessMessageInChannel(textChannel))
@@ -318,31 +319,47 @@ class Program
             {
                 string textToTranslate = RemoveUrls(originalContent);
 
-                if (string.IsNullOrWhiteSpace(textToTranslate))
-                    return;
-
-                var autoTranslateResult = await _translationService.TranslateAsync(
-                    textToTranslate,
-                    translationSettings.TargetLanguage);
-
-                if (autoTranslateResult != null &&
-                    !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                // Translate normal text from the post
+                if (!string.IsNullOrWhiteSpace(textToTranslate))
                 {
-                    string translated = autoTranslateResult.TranslatedText;
-                    if (translated.Length > 4000)
-                        translated = translated[..4000];
+                    var autoTranslateResult = await _translationService.TranslateAsync(
+                        textToTranslate,
+                        translationSettings.TargetLanguage);
 
-                    var embed = new EmbedBuilder()
-                        .WithTitle("🌍 Post Translation")
-                        .WithDescription(translated)
-                        .AddField("Author", message.Author.Mention, true)
-                        .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
-                        .AddField("Target", autoTranslateResult.TargetLanguage, true)
-                        .WithColor(Color.Green)
-                        .Build();
+                    if (autoTranslateResult != null &&
+                        !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        string translated = TrimToLimit(autoTranslateResult.TranslatedText, 4000);
 
-                    await textChannel.SendMessageAsync(embed: embed);
+                        var embed = new EmbedBuilder()
+                            .WithTitle("🌍 Post Translation")
+                            .WithDescription(translated)
+                            .AddField("Author", message.Author.Mention, true)
+                            .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
+                            .AddField("Target", autoTranslateResult.TargetLanguage, true)
+                            .WithColor(Color.Green)
+                            .Build();
+
+                        await textChannel.SendMessageAsync(embed: embed);
+                    }
+                }
+
+                // Translate text from generated embeds too
+                IReadOnlyCollection<Embed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
+
+                foreach (Embed sourceEmbed in resolvedEmbeds)
+                {
+                    if (!EmbedHasTranslatableText(sourceEmbed))
+                        continue;
+
+                    Embed? translatedEmbed = await BuildTranslatedEmbedAsync(
+                        sourceEmbed,
+                        userMessage,
+                        translationSettings.TargetLanguage);
+
+                    if (translatedEmbed != null)
+                        await textChannel.SendMessageAsync(embed: translatedEmbed);
                 }
             }
         }
@@ -468,6 +485,7 @@ class Program
 
         await channel.SendMessageAsync(embed: embed);
     }
+
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
     {
         string raw = message.Content.Trim();
@@ -717,10 +735,10 @@ class Program
     }
 
     private async Task HandleTranslateCommand(
-    SocketUserMessage message,
-    SocketTextChannel textChannel,
-    GuildSettings settings,
-    string[] parts)
+        SocketUserMessage message,
+        SocketTextChannel textChannel,
+        GuildSettings settings,
+        string[] parts)
     {
         string targetLanguage = settings.TargetLanguage;
         string textToTranslate = "";
@@ -913,6 +931,8 @@ class Program
             .WithDescription($"Settings for **{channel.Guild.Name}**")
             .AddField("Status", enabledText, true)
             .AddField("Allowed Channels", whitelistText, false)
+            .AddField("Translation Language", settings.TargetLanguage, true)
+            .AddField("Auto-Translate", settings.AutoTranslateEnabled ? "Enabled" : "Disabled", true)
             .WithColor(settings.Enabled ? Color.Green : Color.Red)
             .WithCurrentTimestamp()
             .Build();
@@ -1163,6 +1183,7 @@ class Program
         result.Total = total + request.Modifier;
         return result;
     }
+
     private async Task ButtonExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
@@ -1298,6 +1319,151 @@ class Program
             {
             }
         }
+    }
+
+    private async Task<IReadOnlyCollection<Embed>> GetResolvedEmbedsAsync(SocketUserMessage message, SocketTextChannel textChannel)
+    {
+        if (message.Embeds != null && message.Embeds.Count > 0)
+            return message.Embeds;
+
+        await Task.Delay(2000);
+
+        IMessage refreshedMessage = await textChannel.GetMessageAsync(message.Id);
+        return refreshedMessage?.Embeds ?? Array.Empty<Embed>();
+    }
+
+    private bool EmbedHasTranslatableText(Embed embed)
+    {
+        if (!string.IsNullOrWhiteSpace(embed.Title))
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(embed.Description))
+            return true;
+
+        if (embed.Author != null && !string.IsNullOrWhiteSpace(embed.Author.Value.Name))
+            return true;
+
+        if (embed.Footer != null && !string.IsNullOrWhiteSpace(embed.Footer.Value.Text))
+            return true;
+
+        if (embed.Fields != null && embed.Fields.Any(f =>
+                !string.IsNullOrWhiteSpace(f.Name) ||
+                !string.IsNullOrWhiteSpace(f.Value)))
+            return true;
+
+        return false;
+    }
+
+    private async Task<Embed?> BuildTranslatedEmbedAsync(
+        Embed sourceEmbed,
+        SocketUserMessage originalMessage,
+        string targetLanguage)
+    {
+        var builder = new EmbedBuilder()
+            .WithTitle("🌍 Embedded Translation")
+            .WithColor(Color.Blue);
+
+        bool hasTranslatedContent = false;
+        string detectedLanguage = "unknown";
+
+        string detectionSample = !string.IsNullOrWhiteSpace(sourceEmbed.Description)
+            ? sourceEmbed.Description
+            : sourceEmbed.Title ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(detectionSample))
+        {
+            var detectResult = await _translationService.TranslateAsync(detectionSample, targetLanguage);
+            if (detectResult != null && !string.IsNullOrWhiteSpace(detectResult.DetectedSourceLanguage))
+                detectedLanguage = detectResult.DetectedSourceLanguage;
+        }
+
+        string? translatedDescription = await TranslatePieceAsync(sourceEmbed.Description, targetLanguage, 4000);
+        if (!string.IsNullOrWhiteSpace(translatedDescription))
+        {
+            builder.WithDescription(translatedDescription);
+            hasTranslatedContent = true;
+        }
+
+        string? translatedTitle = await TranslatePieceAsync(sourceEmbed.Title, targetLanguage, 256);
+        if (!string.IsNullOrWhiteSpace(translatedTitle))
+        {
+            builder.AddField("Title", translatedTitle, false);
+            hasTranslatedContent = true;
+        }
+
+        if (sourceEmbed.Author != null && !string.IsNullOrWhiteSpace(sourceEmbed.Author.Value.Name))
+        {
+            string? translatedAuthor = await TranslatePieceAsync(sourceEmbed.Author.Value.Name, targetLanguage, 256);
+            if (!string.IsNullOrWhiteSpace(translatedAuthor))
+            {
+                builder.AddField("Embed Author", translatedAuthor, true);
+                hasTranslatedContent = true;
+            }
+        }
+
+        if (sourceEmbed.Footer != null && !string.IsNullOrWhiteSpace(sourceEmbed.Footer.Value.Text))
+        {
+            string? translatedFooter = await TranslatePieceAsync(sourceEmbed.Footer.Value.Text, targetLanguage, 1024);
+            if (!string.IsNullOrWhiteSpace(translatedFooter))
+            {
+                builder.AddField("Footer", translatedFooter, false);
+                hasTranslatedContent = true;
+            }
+        }
+
+        if (sourceEmbed.Fields != null)
+        {
+            foreach (EmbedField field in sourceEmbed.Fields.Take(25))
+            {
+                string translatedFieldName = await TranslatePieceAsync(field.Name, targetLanguage, 256) ?? "Field";
+                string translatedFieldValue = await TranslatePieceAsync(field.Value, targetLanguage, 1024) ?? " ";
+
+                if (!string.IsNullOrWhiteSpace(translatedFieldName) || !string.IsNullOrWhiteSpace(translatedFieldValue))
+                {
+                    builder.AddField(
+                        TrimToLimit(translatedFieldName, 256),
+                        TrimToLimit(translatedFieldValue, 1024),
+                        field.Inline);
+
+                    hasTranslatedContent = true;
+                }
+            }
+        }
+
+        if (!hasTranslatedContent)
+            return null;
+
+        builder.AddField("Author", originalMessage.Author.Mention, true)
+               .AddField("Detected", detectedLanguage, true)
+               .AddField("Target", targetLanguage, true);
+
+        return builder.Build();
+    }
+
+    private async Task<string?> TranslatePieceAsync(string? text, string targetLanguage, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var result = await _translationService.TranslateAsync(text, targetLanguage);
+        if (result == null)
+            return null;
+
+        if (string.Equals(result.DetectedSourceLanguage, targetLanguage, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (string.Equals(result.OriginalText.Trim(), result.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return TrimToLimit(result.TranslatedText, maxLength);
+    }
+
+    private string TrimToLimit(string text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return text.Length <= maxLength ? text : text[..maxLength];
     }
 
     private bool ShouldProcessMessageInChannel(SocketTextChannel channel)
@@ -2088,7 +2254,6 @@ class GuildSettings
     public ulong GuildId { get; set; }
     public bool Enabled { get; set; } = true;
     public List<ulong> WhitelistedChannelIds { get; set; } = new();
-
     public bool AutoTranslateEnabled { get; set; } = false;
     public string TargetLanguage { get; set; } = "en";
 }
