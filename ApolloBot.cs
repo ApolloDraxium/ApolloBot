@@ -6,7 +6,6 @@ using Discord.Net;
 using Discord.Rest;
 using Discord.Webhook;
 using Discord.WebSocket;
-using ApolloBot.Services;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,7 +21,6 @@ class Program
     private readonly Random _random = new();
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
-    private readonly TranslationService _translationService = new();
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -70,6 +68,7 @@ class Program
     private readonly Dictionary<ulong, RelayMessageState> _relayStates = new();
     private readonly Dictionary<(ulong MessageId, ulong UserId), DateTime> _cooldowns = new();
     private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
+    private readonly Dictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
 
     private const string WebhookName = "Apollo Bot Relay";
 
@@ -84,6 +83,9 @@ class Program
 
     private static readonly string GuildSettingsFilePath =
         Path.Combine(DataDirectory, "guild_settings.json");
+
+    private static readonly string UserIgnoreSettingsFilePath =
+        Path.Combine(DataDirectory, "user_ignore_settings.json");
 
     private static readonly HashSet<ulong> BotOwnerIds = new()
     {
@@ -102,6 +104,7 @@ class Program
         Directory.CreateDirectory(DataDirectory);
         LoadRelayStates();
         LoadGuildSettings();
+        LoadUserIgnoreSettings();
         LoadBotStatsState();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -146,6 +149,7 @@ class Program
         Console.WriteLine($"Connected as {_client?.CurrentUser}");
         Console.WriteLine($"Loaded {_relayStates.Count} persisted relay state(s).");
         Console.WriteLine($"Loaded {_guildSettings.Count} guild setting profile(s).");
+        Console.WriteLine($"Loaded {_userIgnoreSettings.Count} user ignore profile(s).");
 
         if (_client != null)
             await _client.SetActivityAsync(new Game("Running 24/7", ActivityType.Watching));
@@ -225,7 +229,10 @@ class Program
             return;
 
         if (string.IsNullOrWhiteSpace(userMessage.Content))
+        {
+            await NotifyOriginalAuthorOfReplyAsync(userMessage, textChannel);
             return;
+        }
 
         string content = userMessage.Content.Trim();
 
@@ -251,6 +258,9 @@ class Program
         await NotifyOriginalAuthorOfReplyAsync(userMessage, textChannel);
 
         if (!ShouldProcessMessageInChannel(textChannel))
+            return;
+
+        if (ShouldIgnoreUser(textChannel.Guild.Id, userMessage.Author.Id))
             return;
 
         string originalContent = message.Content;
@@ -312,132 +322,6 @@ class Program
             IncrementEmbedsFixedCount();
 
             await message.DeleteAsync();
-
-            GuildSettings translationSettings = GetOrCreateGuildSettings(textChannel.Guild.Id);
-
-            if (translationSettings.AutoTranslateEnabled)
-            {
-                try
-                {
-                    string textToTranslate = RemoveUrls(originalContent);
-
-                    if (!string.IsNullOrWhiteSpace(textToTranslate))
-                    {
-                        var autoTranslateResult = await _translationService.TranslateAsync(
-                            textToTranslate,
-                            translationSettings.TargetLanguage);
-
-                        if (autoTranslateResult != null &&
-                            !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
-                        {
-                            string translated = autoTranslateResult.TranslatedText;
-                            if (translated.Length > 4000)
-                                translated = translated[..4000];
-
-                            var embed = new EmbedBuilder()
-                                .WithTitle("🌍 Post Translation")
-                                .WithDescription(translated)
-                                .AddField("Author", message.Author.Mention, true)
-                                .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
-                                .AddField("Target", autoTranslateResult.TargetLanguage, true)
-                                .WithColor(Color.Green)
-                                .Build();
-
-                            await textChannel.SendMessageAsync(embed: embed);
-                        }
-                    }
-
-                    await Task.Delay(2000);
-
-                    IMessage refreshedMessage = await textChannel.GetMessageAsync(message.Id);
-
-                    if (refreshedMessage?.Embeds != null)
-                    {
-                        foreach (var embedData in refreshedMessage.Embeds)
-                        {
-                            string combined = "";
-
-                            if (!string.IsNullOrWhiteSpace(embedData.Title))
-                                combined += embedData.Title + "\n";
-
-                            if (!string.IsNullOrWhiteSpace(embedData.Description))
-                                combined += embedData.Description + "\n";
-
-                            if (embedData.Fields != null)
-                            {
-                                foreach (var field in embedData.Fields)
-                                {
-                                    if (!string.IsNullOrWhiteSpace(field.Name))
-                                        combined += field.Name + "\n";
-
-                                    if (!string.IsNullOrWhiteSpace(field.Value))
-                                        combined += field.Value + "\n";
-                                }
-                            }
-
-                            if (string.IsNullOrWhiteSpace(combined))
-                                continue;
-
-                            var embedTranslate = await _translationService.TranslateAsync(
-                                combined,
-                                translationSettings.TargetLanguage);
-
-                            if (embedTranslate == null)
-                                continue;
-
-                            if (string.Equals(embedTranslate.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase))
-                                continue;
-
-                            if (string.Equals(embedTranslate.OriginalText.Trim(), embedTranslate.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
-                                continue;
-
-                            string translatedEmbedText = embedTranslate.TranslatedText;
-                            if (translatedEmbedText.Length > 4000)
-                                translatedEmbedText = translatedEmbedText[..4000];
-
-                            var translatedEmbed = new EmbedBuilder()
-                                .WithTitle("🌍 Embedded Content Translation")
-                                .WithDescription(translatedEmbedText)
-                                .AddField("Author", message.Author.Mention, true)
-                                .AddField("Detected", embedTranslate.DetectedSourceLanguage, true)
-                                .AddField("Target", embedTranslate.TargetLanguage, true)
-                                .WithColor(Color.Blue)
-                                .Build();
-
-                            await textChannel.SendMessageAsync(embed: translatedEmbed);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogPermissionFailure(textChannel, "Auto-translating post", ex);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            LogPermissionFailure(textChannel, "Relaying message", ex);
-        }
-    }
-
-    // Translate text from generated embeds too
-    IReadOnlyCollection<IEmbed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
-
-                foreach (IEmbed sourceEmbed in resolvedEmbeds)
-                {
-                    if (!EmbedHasTranslatableText(sourceEmbed))
-                        continue;
-
-                    Embed? translatedEmbed = await BuildTranslatedEmbedAsync(
-                        sourceEmbed,
-                        userMessage,
-                        translationSettings.TargetLanguage);
-
-                    if (translatedEmbed != null)
-                        await textChannel.SendMessageAsync(embed: translatedEmbed);
-                }
-            }
         }
         catch (Exception ex)
         {
@@ -527,6 +411,7 @@ class Program
             int serverCount = _client?.Guilds.Count ?? 0;
             int relayCount = _relayStates.Count;
             int guildSettingsCount = _guildSettings.Count;
+            int ignoredUsersCount = _userIgnoreSettings.Count;
             TimeSpan uptime = DateTime.UtcNow - _startedAtUtc;
 
             var embed = new EmbedBuilder()
@@ -534,6 +419,7 @@ class Program
                 .AddField("Servers", serverCount, true)
                 .AddField("Relay States", relayCount, true)
                 .AddField("Guild Settings", guildSettingsCount, true)
+                .AddField("Ignored User Profiles", ignoredUsersCount, true)
                 .AddField("Platforms Supported", _providers.Count, true)
                 .AddField("Uptime", FormatDuration(uptime), true)
                 .WithColor(Color.DarkBlue)
@@ -634,17 +520,9 @@ class Program
             return;
         }
 
-        if (sub == "language")
+        if (sub == "ignore")
         {
-            await textChannel.SendMessageAsync(
-                $"🌍 Server target language: `{settings.TargetLanguage}`\n" +
-                $"🔁 Auto-translate: **{(settings.AutoTranslateEnabled ? "ON" : "OFF")}**");
-            return;
-        }
-
-        if (sub == "translate")
-        {
-            await HandleTranslateCommand(message, textChannel, settings, parts);
+            await HandleIgnoreCommand(message, textChannel, parts);
             return;
         }
 
@@ -670,54 +548,6 @@ class Program
             return;
         }
 
-        if (sub == "setlanguage")
-        {
-            if (parts.Length < 2)
-            {
-                await textChannel.SendMessageAsync("Usage: `!ab setlanguage <language>`");
-                return;
-            }
-
-            string languageInput = string.Join(' ', parts.Skip(1));
-            string languageCode = _translationService.NormalizeLanguageCode(languageInput);
-
-            settings.TargetLanguage = languageCode;
-            SaveGuildSettings();
-
-            await textChannel.SendMessageAsync($"🌍 Server translation language set to `{languageCode}`");
-            return;
-        }
-
-        if (sub == "autotranslate")
-        {
-            if (parts.Length < 2)
-            {
-                await textChannel.SendMessageAsync("Usage: `!ab autotranslate on` or `!ab autotranslate off`");
-                return;
-            }
-
-            string mode = parts[1].ToLowerInvariant();
-
-            if (mode == "on")
-            {
-                settings.AutoTranslateEnabled = true;
-                SaveGuildSettings();
-                await textChannel.SendMessageAsync($"🔁 Auto-translation is now **ON** to `{settings.TargetLanguage}`");
-                return;
-            }
-
-            if (mode == "off")
-            {
-                settings.AutoTranslateEnabled = false;
-                SaveGuildSettings();
-                await textChannel.SendMessageAsync("🔁 Auto-translation is now **OFF**");
-                return;
-            }
-
-            await textChannel.SendMessageAsync("Usage: `!ab autotranslate on` or `!ab autotranslate off`");
-            return;
-        }
-
         if (sub == "whitelist")
         {
             await HandleWhitelistCommand(message, textChannel, settings, parts);
@@ -725,6 +555,107 @@ class Program
         }
 
         await SendApolloBotHelp(textChannel, message.Author);
+    }
+
+    private async Task HandleIgnoreCommand(SocketUserMessage message, SocketTextChannel textChannel, string[] parts)
+    {
+        UserIgnoreSettings ignoreSettings = GetOrCreateUserIgnoreSettings(message.Author.Id);
+        ulong guildId = textChannel.Guild.Id;
+
+        if (parts.Length < 2)
+        {
+            bool ignoredHere = IsIgnoredInGuild(ignoreSettings, guildId);
+            string globalText = ignoreSettings.IgnoreAllServers ? "ON" : "OFF";
+            string thisServerText = ignoredHere ? "ON" : "OFF";
+
+            await textChannel.SendMessageAsync(
+                $"**Your ignore settings**\n" +
+                $"This server: **{thisServerText}**\n" +
+                $"All servers: **{globalText}**\n\n" +
+                "Commands:\n" +
+                "`!ab ignore on`\n" +
+                "`!ab ignore off`\n" +
+                "`!ab ignore all`\n" +
+                "`!ab ignore all on`\n" +
+                "`!ab ignore all off`");
+            return;
+        }
+
+        string action = parts[1].ToLowerInvariant();
+
+        if (action == "on")
+        {
+            if (!ignoreSettings.IgnoredGuildIds.Contains(guildId))
+                ignoreSettings.IgnoredGuildIds.Add(guildId);
+
+            SaveUserIgnoreSettings();
+            await textChannel.SendMessageAsync("✅ ApolloBot will now **ignore your embeds in this server**.");
+            return;
+        }
+
+        if (action == "off")
+        {
+            bool removed = ignoreSettings.IgnoredGuildIds.Remove(guildId);
+            SaveUserIgnoreSettings();
+
+            if (ignoreSettings.IgnoreAllServers)
+            {
+                await textChannel.SendMessageAsync(
+                    "⚠️ You turned off ignore for this server, but your **global ignore is still ON**, so ApolloBot will still ignore you everywhere.\n" +
+                    "Use `!ab ignore all off` if you want the bot to process your embeds again.");
+                return;
+            }
+
+            await textChannel.SendMessageAsync(
+                removed
+                    ? "✅ ApolloBot will no longer ignore your embeds in this server."
+                    : "ApolloBot was already **not** ignoring your embeds in this server.");
+            return;
+        }
+
+        if (action == "all")
+        {
+            if (parts.Length >= 3)
+            {
+                string mode = parts[2].ToLowerInvariant();
+
+                if (mode == "on")
+                {
+                    ignoreSettings.IgnoreAllServers = true;
+                    SaveUserIgnoreSettings();
+                    await textChannel.SendMessageAsync("✅ ApolloBot will now **ignore your embeds in all servers**.");
+                    return;
+                }
+
+                if (mode == "off")
+                {
+                    ignoreSettings.IgnoreAllServers = false;
+                    SaveUserIgnoreSettings();
+                    await textChannel.SendMessageAsync("✅ ApolloBot will no longer ignore your embeds globally.");
+                    return;
+                }
+
+                await textChannel.SendMessageAsync("Usage: `!ab ignore all`, `!ab ignore all on`, or `!ab ignore all off`");
+                return;
+            }
+
+            ignoreSettings.IgnoreAllServers = !ignoreSettings.IgnoreAllServers;
+            SaveUserIgnoreSettings();
+
+            await textChannel.SendMessageAsync(
+                ignoreSettings.IgnoreAllServers
+                    ? "✅ ApolloBot will now **ignore your embeds in all servers**."
+                    : "✅ ApolloBot will no longer ignore your embeds globally.");
+            return;
+        }
+
+        await textChannel.SendMessageAsync(
+            "Usage:\n" +
+            "`!ab ignore on`\n" +
+            "`!ab ignore off`\n" +
+            "`!ab ignore all`\n" +
+            "`!ab ignore all on`\n" +
+            "`!ab ignore all off`");
     }
 
     private async Task SendApolloBotHelp(SocketTextChannel channel, SocketUser user)
@@ -741,9 +672,9 @@ class Program
                 "`!ab providers` – Show providers\n" +
                 "`!ab perms` – Check permissions\n" +
                 "`!ab status` – Server settings\n" +
-                "`!ab translate <text>` – Translate text to server language\n" +
-                "`!ab translate to <language> <text>` – Translate to a chosen language\n" +
-                "`!ab language` – Show translation language\n" +
+                "`!ab ignore on` – Ignore your embeds in this server\n" +
+                "`!ab ignore off` – Stop ignoring your embeds in this server\n" +
+                "`!ab ignore all` – Toggle ignore in all servers\n" +
                 "`/roll` – Roll dice", false);
 
         if (isAdmin)
@@ -754,9 +685,6 @@ class Program
                 "`!ab whitelist add #channel`\n" +
                 "`!ab whitelist remove #channel`\n" +
                 "`!ab whitelist list`\n" +
-                "`!ab setlanguage <language>`\n" +
-                "`!ab autotranslate on`\n" +
-                "`!ab autotranslate off`\n" +
                 "`!ab whitelist clear`", false);
         }
 
@@ -787,6 +715,8 @@ class Program
                 "• Delete button\n" +
                 "• Cooldowns\n" +
                 "• Persistence\n" +
+                "• User ignore system\n" +
+                "• Reply ping for original poster\n" +
                 "• Server enable/disable and whitelist settings\n" +
                 "• Slash roll command", false)
             .WithColor(Color.Gold)
@@ -808,113 +738,6 @@ class Program
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
-    }
-
-    private async Task HandleTranslateCommand(
-        SocketUserMessage message,
-        SocketTextChannel textChannel,
-        GuildSettings settings,
-        string[] parts)
-    {
-        string targetLanguage = settings.TargetLanguage;
-        string textToTranslate = "";
-
-        if (parts.Length >= 3 && parts[1].Equals("to", StringComparison.OrdinalIgnoreCase))
-        {
-            if (parts.Length < 4)
-            {
-                if (message.Reference?.MessageId.IsSpecified == true)
-                {
-                    string? replyText = await TryGetReferencedMessageContentAsync(message, textChannel);
-                    if (string.IsNullOrWhiteSpace(replyText))
-                    {
-                        await textChannel.SendMessageAsync("I couldn't find any replied-to message content to translate.");
-                        return;
-                    }
-
-                    targetLanguage = _translationService.NormalizeLanguageCode(parts[2]);
-                    textToTranslate = replyText;
-                }
-                else
-                {
-                    await textChannel.SendMessageAsync("Usage: `!ab translate to <language> <text>` or reply with `!ab translate to <language>`");
-                    return;
-                }
-            }
-            else
-            {
-                targetLanguage = _translationService.NormalizeLanguageCode(parts[2]);
-                textToTranslate = string.Join(' ', parts.Skip(3));
-            }
-        }
-        else
-        {
-            if (parts.Length >= 2)
-            {
-                textToTranslate = string.Join(' ', parts.Skip(1));
-            }
-            else if (message.Reference?.MessageId.IsSpecified == true)
-            {
-                string? replyText = await TryGetReferencedMessageContentAsync(message, textChannel);
-                if (string.IsNullOrWhiteSpace(replyText))
-                {
-                    await textChannel.SendMessageAsync("I couldn't find any replied-to message content to translate.");
-                    return;
-                }
-
-                textToTranslate = replyText;
-            }
-            else
-            {
-                await textChannel.SendMessageAsync(
-                    "Usage:\n" +
-                    "`!ab translate <text>`\n" +
-                    "`!ab translate to <language> <text>`\n" +
-                    "or reply to a message with `!ab translate`");
-                return;
-            }
-        }
-
-        var result = await _translationService.TranslateAsync(textToTranslate, targetLanguage);
-
-        if (result == null)
-        {
-            await textChannel.SendMessageAsync("⚠️ Translation not available right now. Google credentials may not be configured yet.");
-            return;
-        }
-
-        string translated = result.TranslatedText;
-        if (translated.Length > 4000)
-            translated = translated[..4000];
-
-        var embed = new EmbedBuilder()
-            .WithTitle("🌍 Translation")
-            .WithDescription(translated)
-            .AddField("Detected Language", result.DetectedSourceLanguage, true)
-            .AddField("Target Language", result.TargetLanguage, true)
-            .WithColor(Color.Blue)
-            .WithCurrentTimestamp()
-            .Build();
-
-        await textChannel.SendMessageAsync(embed: embed);
-    }
-
-    private async Task<string?> TryGetReferencedMessageContentAsync(SocketUserMessage message, SocketTextChannel channel)
-    {
-        try
-        {
-            if (message.Reference?.MessageId.IsSpecified != true)
-                return null;
-
-            ulong referencedMessageId = message.Reference.MessageId.Value;
-            IMessage referencedMessage = await channel.GetMessageAsync(referencedMessageId);
-
-            return referencedMessage?.Content;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private async Task HandleWhitelistCommand(SocketUserMessage message, SocketTextChannel textChannel, GuildSettings settings, string[] parts)
@@ -1007,8 +830,6 @@ class Program
             .WithDescription($"Settings for **{channel.Guild.Name}**")
             .AddField("Status", enabledText, true)
             .AddField("Allowed Channels", whitelistText, false)
-            .AddField("Translation Language", settings.TargetLanguage, true)
-            .AddField("Auto-Translate", settings.AutoTranslateEnabled ? "Enabled" : "Disabled", true)
             .WithColor(settings.Enabled ? Color.Green : Color.Red)
             .WithCurrentTimestamp()
             .Build();
@@ -1397,151 +1218,6 @@ class Program
         }
     }
 
-    private async Task<IReadOnlyCollection<IEmbed>> GetResolvedEmbedsAsync(SocketUserMessage message, SocketTextChannel textChannel)
-    {
-        if (message.Embeds != null && message.Embeds.Count > 0)
-            return message.Embeds;
-
-        await Task.Delay(2000);
-
-        IMessage refreshedMessage = await textChannel.GetMessageAsync(message.Id);
-        return refreshedMessage?.Embeds ?? Array.Empty<Embed>();
-    }
-
-    private bool EmbedHasTranslatableText(IEmbed embed)
-    {
-        if (!string.IsNullOrWhiteSpace(embed.Title))
-            return true;
-
-        if (!string.IsNullOrWhiteSpace(embed.Description))
-            return true;
-
-        if (embed.Author != null && !string.IsNullOrWhiteSpace(embed.Author.Value.Name))
-            return true;
-
-        if (embed.Footer != null && !string.IsNullOrWhiteSpace(embed.Footer.Value.Text))
-            return true;
-
-        if (embed.Fields != null && embed.Fields.Any(f =>
-                !string.IsNullOrWhiteSpace(f.Name) ||
-                !string.IsNullOrWhiteSpace(f.Value)))
-            return true;
-
-        return false;
-    }
-
-    private async Task<Embed?> BuildTranslatedEmbedAsync(
-        IEmbed sourceEmbed,
-        SocketUserMessage originalMessage,
-        string targetLanguage)
-    {
-        var builder = new EmbedBuilder()
-            .WithTitle("🌍 Embedded Translation")
-            .WithColor(Color.Blue);
-
-        bool hasTranslatedContent = false;
-        string detectedLanguage = "unknown";
-
-        string detectionSample = !string.IsNullOrWhiteSpace(sourceEmbed.Description)
-            ? sourceEmbed.Description
-            : sourceEmbed.Title ?? string.Empty;
-
-        if (!string.IsNullOrWhiteSpace(detectionSample))
-        {
-            var detectResult = await _translationService.TranslateAsync(detectionSample, targetLanguage);
-            if (detectResult != null && !string.IsNullOrWhiteSpace(detectResult.DetectedSourceLanguage))
-                detectedLanguage = detectResult.DetectedSourceLanguage;
-        }
-
-        string? translatedDescription = await TranslatePieceAsync(sourceEmbed.Description, targetLanguage, 4000);
-        if (!string.IsNullOrWhiteSpace(translatedDescription))
-        {
-            builder.WithDescription(translatedDescription);
-            hasTranslatedContent = true;
-        }
-
-        string? translatedTitle = await TranslatePieceAsync(sourceEmbed.Title, targetLanguage, 256);
-        if (!string.IsNullOrWhiteSpace(translatedTitle))
-        {
-            builder.AddField("Title", translatedTitle, false);
-            hasTranslatedContent = true;
-        }
-
-        if (sourceEmbed.Author != null && !string.IsNullOrWhiteSpace(sourceEmbed.Author.Value.Name))
-        {
-            string? translatedAuthor = await TranslatePieceAsync(sourceEmbed.Author.Value.Name, targetLanguage, 256);
-            if (!string.IsNullOrWhiteSpace(translatedAuthor))
-            {
-                builder.AddField("Embed Author", translatedAuthor, true);
-                hasTranslatedContent = true;
-            }
-        }
-
-        if (sourceEmbed.Footer != null && !string.IsNullOrWhiteSpace(sourceEmbed.Footer.Value.Text))
-        {
-            string? translatedFooter = await TranslatePieceAsync(sourceEmbed.Footer.Value.Text, targetLanguage, 1024);
-            if (!string.IsNullOrWhiteSpace(translatedFooter))
-            {
-                builder.AddField("Footer", translatedFooter, false);
-                hasTranslatedContent = true;
-            }
-        }
-
-        if (sourceEmbed.Fields != null)
-        {
-            foreach (EmbedField field in sourceEmbed.Fields.Take(25))
-            {
-                string translatedFieldName = await TranslatePieceAsync(field.Name, targetLanguage, 256) ?? "Field";
-                string translatedFieldValue = await TranslatePieceAsync(field.Value, targetLanguage, 1024) ?? " ";
-
-                if (!string.IsNullOrWhiteSpace(translatedFieldName) || !string.IsNullOrWhiteSpace(translatedFieldValue))
-                {
-                    builder.AddField(
-                        TrimToLimit(translatedFieldName, 256),
-                        TrimToLimit(translatedFieldValue, 1024),
-                        field.Inline);
-
-                    hasTranslatedContent = true;
-                }
-            }
-        }
-
-        if (!hasTranslatedContent)
-            return null;
-
-        builder.AddField("Author", originalMessage.Author.Mention, true)
-               .AddField("Detected", detectedLanguage, true)
-               .AddField("Target", targetLanguage, true);
-
-        return builder.Build();
-    }
-
-    private async Task<string?> TranslatePieceAsync(string? text, string targetLanguage, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-
-        var result = await _translationService.TranslateAsync(text, targetLanguage);
-        if (result == null)
-            return null;
-
-        if (string.Equals(result.DetectedSourceLanguage, targetLanguage, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        if (string.Equals(result.OriginalText.Trim(), result.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        return TrimToLimit(result.TranslatedText, maxLength);
-    }
-
-    private string TrimToLimit(string text, int maxLength)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return string.Empty;
-
-        return text.Length <= maxLength ? text : text[..maxLength];
-    }
-
     private bool ShouldProcessMessageInChannel(SocketTextChannel channel)
     {
         GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
@@ -1563,25 +1239,51 @@ class Program
     private GuildSettings GetOrCreateGuildSettings(ulong guildId)
     {
         if (_guildSettings.TryGetValue(guildId, out GuildSettings? existing))
-        {
-            if (string.IsNullOrWhiteSpace(existing.TargetLanguage))
-                existing.TargetLanguage = "en";
-
             return existing;
-        }
 
         var created = new GuildSettings
         {
             GuildId = guildId,
             Enabled = true,
-            WhitelistedChannelIds = new List<ulong>(),
-            AutoTranslateEnabled = false,
-            TargetLanguage = "en"
+            WhitelistedChannelIds = new List<ulong>()
         };
 
         _guildSettings[guildId] = created;
         SaveGuildSettings();
         return created;
+    }
+
+    private UserIgnoreSettings GetOrCreateUserIgnoreSettings(ulong userId)
+    {
+        if (_userIgnoreSettings.TryGetValue(userId, out UserIgnoreSettings? existing))
+            return existing;
+
+        var created = new UserIgnoreSettings
+        {
+            UserId = userId,
+            IgnoreAllServers = false,
+            IgnoredGuildIds = new List<ulong>()
+        };
+
+        _userIgnoreSettings[userId] = created;
+        SaveUserIgnoreSettings();
+        return created;
+    }
+
+    private bool ShouldIgnoreUser(ulong guildId, ulong userId)
+    {
+        if (!_userIgnoreSettings.TryGetValue(userId, out UserIgnoreSettings? settings))
+            return false;
+
+        if (settings.IgnoreAllServers)
+            return true;
+
+        return settings.IgnoredGuildIds.Contains(guildId);
+    }
+
+    private bool IsIgnoredInGuild(UserIgnoreSettings settings, ulong guildId)
+    {
+        return settings.IgnoreAllServers || settings.IgnoredGuildIds.Contains(guildId);
     }
 
     private bool IsMissingPermissionsError(Exception ex)
@@ -1986,14 +1688,6 @@ class Program
         }
     }
 
-    private string RemoveUrls(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return "";
-
-        return Regex.Replace(text, @"https?://\S+", "").Trim();
-    }
-
     private void LoadBotStatsState()
     {
         try
@@ -2046,12 +1740,12 @@ class Program
             string jumpUrl = $"https://discord.com/channels/{textChannel.Guild.Id}/{textChannel.Id}/{replyMessage.Id}";
             string replierName = replyMessage.Author.GlobalName ?? replyMessage.Author.Username;
 
-            AllowedMentions mentions = new AllowedMentions(AllowedMentionTypes.Users);
-            mentions.UserIds = new List<ulong> { relayState.OriginalAuthorId };
+            var allowedMentions = new AllowedMentions(AllowedMentionTypes.Users);
+            allowedMentions.UserIds = new List<ulong> { relayState.OriginalAuthorId };
 
             IUserMessage pingMessage = await textChannel.SendMessageAsync(
                 text: $"{originalAuthor.Mention} **{replierName}** replied to your relayed message: {jumpUrl}",
-                allowedMentions: mentions);
+                allowedMentions: allowedMentions);
 
             _ = Task.Run(async () =>
             {
@@ -2262,6 +1956,58 @@ class Program
         }
     }
 
+    private void SaveUserIgnoreSettings()
+    {
+        try
+        {
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true
+            };
+
+            string json = JsonSerializer.Serialize(_userIgnoreSettings, options);
+            File.WriteAllText(UserIgnoreSettingsFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save user ignore settings: {ex}");
+        }
+    }
+
+    private void LoadUserIgnoreSettings()
+    {
+        try
+        {
+            if (!File.Exists(UserIgnoreSettingsFilePath))
+            {
+                Console.WriteLine("No user ignore settings file found. Starting fresh.");
+                return;
+            }
+
+            string json = File.ReadAllText(UserIgnoreSettingsFilePath);
+
+            Dictionary<ulong, UserIgnoreSettings>? loaded =
+                JsonSerializer.Deserialize<Dictionary<ulong, UserIgnoreSettings>>(json);
+
+            if (loaded == null)
+            {
+                Console.WriteLine("User ignore settings file was empty or invalid. Starting fresh.");
+                return;
+            }
+
+            _userIgnoreSettings.Clear();
+
+            foreach ((ulong userId, UserIgnoreSettings settings) in loaded)
+                _userIgnoreSettings[userId] = settings;
+
+            Console.WriteLine($"Loaded {_userIgnoreSettings.Count} user ignore profile(s) from disk.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load user ignore settings: {ex}");
+        }
+    }
+
     private void CleanupOldCooldowns()
     {
         DateTime cutoff = DateTime.UtcNow - CooldownRetention;
@@ -2330,6 +2076,11 @@ class GuildSettings
     public ulong GuildId { get; set; }
     public bool Enabled { get; set; } = true;
     public List<ulong> WhitelistedChannelIds { get; set; } = new();
-    public bool AutoTranslateEnabled { get; set; } = false;
-    public string TargetLanguage { get; set; } = "en";
+}
+
+class UserIgnoreSettings
+{
+    public ulong UserId { get; set; }
+    public bool IgnoreAllServers { get; set; } = false;
+    public List<ulong> IgnoredGuildIds { get; set; } = new();
 }
