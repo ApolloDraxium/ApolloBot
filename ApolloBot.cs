@@ -15,7 +15,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Google.Apis.Auth.OAuth2;
 
 class Program
 {
@@ -250,41 +249,6 @@ class Program
         }
         await NotifyOriginalAuthorOfReplyAsync(userMessage, textChannel);
 
-        GuildSettings translationSettings = GetOrCreateGuildSettings(textChannel.Guild.Id);
-
-        if (translationSettings.AutoTranslateEnabled)
-        {
-            var autoTranslateResult = await _translationService.TranslateAsync(
-                userMessage.Content,
-                translationSettings.TargetLanguage);
-
-            if (autoTranslateResult != null &&
-                !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                string translated = autoTranslateResult.TranslatedText;
-                if (translated.Length > 4000)
-                    translated = translated[..4000];
-
-                var embed = new EmbedBuilder()
-                    .WithTitle("🌍 Auto Translation")
-                    .WithDescription(translated)
-                    .AddField("Author", message.Author.Mention, true)
-                    .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
-                    .AddField("Target", autoTranslateResult.TargetLanguage, true)
-                    .WithColor(Color.Green)
-                    .Build();
-
-                await textChannel.SendMessageAsync(embed: embed);
-            }
-        }
-
-        if (content.StartsWith("!ab", StringComparison.OrdinalIgnoreCase))
-        {
-            await HandleApolloBotCommand(userMessage, textChannel);
-            return;
-        }
-
         if (!ShouldProcessMessageInChannel(textChannel))
             return;
 
@@ -347,7 +311,41 @@ class Program
             IncrementEmbedsFixedCount();
 
             await message.DeleteAsync();
-        }
+
+            GuildSettings translationSettings = GetOrCreateGuildSettings(textChannel.Guild.Id);
+
+            if (translationSettings.AutoTranslateEnabled)
+            {
+                string textToTranslate = RemoveUrls(originalContent);
+
+                if (string.IsNullOrWhiteSpace(textToTranslate))
+                    return;
+
+                var autoTranslateResult = await _translationService.TranslateAsync(
+                    textToTranslate,
+                    translationSettings.TargetLanguage);
+
+                if (autoTranslateResult != null &&
+                    !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    string translated = autoTranslateResult.TranslatedText;
+                    if (translated.Length > 4000)
+                        translated = translated[..4000];
+
+                    var embed = new EmbedBuilder()
+                        .WithTitle("🌍 Post Translation")
+                        .WithDescription(translated)
+                        .AddField("Author", message.Author.Mention, true)
+                        .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
+                        .AddField("Target", autoTranslateResult.TargetLanguage, true)
+                        .WithColor(Color.Green)
+                        .Build();
+
+                    await textChannel.SendMessageAsync(embed: embed);
+                }
+            }
+
         catch (Exception ex)
         {
             LogPermissionFailure(textChannel, "Relaying message", ex);
@@ -1744,6 +1742,14 @@ class Program
         {
             Console.WriteLine($"Failed to save bot stats state: {ex}");
         }
+    }
+
+    private string RemoveUrls(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        return Regex.Replace(text, @"https?://\S+", "").Trim();
     }
 
     private void LoadBotStatsState()
