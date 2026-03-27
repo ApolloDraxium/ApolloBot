@@ -317,38 +317,111 @@ class Program
 
             if (translationSettings.AutoTranslateEnabled)
             {
-                string textToTranslate = RemoveUrls(originalContent);
-
-                // Translate normal text from the post
-                if (!string.IsNullOrWhiteSpace(textToTranslate))
+                try
                 {
-                    var autoTranslateResult = await _translationService.TranslateAsync(
-                        textToTranslate,
-                        translationSettings.TargetLanguage);
+                    string textToTranslate = RemoveUrls(originalContent);
 
-                    if (autoTranslateResult != null &&
-                        !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrWhiteSpace(textToTranslate))
                     {
-                        string translated = TrimToLimit(autoTranslateResult.TranslatedText, 4000);
+                        var autoTranslateResult = await _translationService.TranslateAsync(
+                            textToTranslate,
+                            translationSettings.TargetLanguage);
 
-                        var embed = new EmbedBuilder()
-                            .WithTitle("🌍 Post Translation")
-                            .WithDescription(translated)
-                            .AddField("Author", message.Author.Mention, true)
-                            .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
-                            .AddField("Target", autoTranslateResult.TargetLanguage, true)
-                            .WithColor(Color.Green)
-                            .Build();
+                        if (autoTranslateResult != null &&
+                            !string.Equals(autoTranslateResult.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(autoTranslateResult.OriginalText.Trim(), autoTranslateResult.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            string translated = autoTranslateResult.TranslatedText;
+                            if (translated.Length > 4000)
+                                translated = translated[..4000];
 
-                        await textChannel.SendMessageAsync(embed: embed);
+                            var embed = new EmbedBuilder()
+                                .WithTitle("🌍 Post Translation")
+                                .WithDescription(translated)
+                                .AddField("Author", message.Author.Mention, true)
+                                .AddField("Detected", autoTranslateResult.DetectedSourceLanguage, true)
+                                .AddField("Target", autoTranslateResult.TargetLanguage, true)
+                                .WithColor(Color.Green)
+                                .Build();
+
+                            await textChannel.SendMessageAsync(embed: embed);
+                        }
+                    }
+
+                    // ===== EMBED TRANSLATION (NO HELPERS VERSION) =====
+
+                    // wait for embeds to load
+                    await Task.Delay(2000);
+
+                    var refreshed = await textChannel.GetMessageAsync(message.Id);
+
+                    if (refreshed?.Embeds != null)
+                    {
+                        foreach (var embedData in refreshed.Embeds)
+                        {
+                            string combined = "";
+
+                            if (!string.IsNullOrWhiteSpace(embedData.Title))
+                                combined += embedData.Title + "\n";
+
+                            if (!string.IsNullOrWhiteSpace(embedData.Description))
+                                combined += embedData.Description + "\n";
+
+                            if (embedData.Fields != null)
+                            {
+                                foreach (var field in embedData.Fields)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(field.Name))
+                                        combined += field.Name + "\n";
+
+                                    if (!string.IsNullOrWhiteSpace(field.Value))
+                                        combined += field.Value + "\n";
+                                }
+                            }
+
+                            if (string.IsNullOrWhiteSpace(combined))
+                                continue;
+
+                            var embedTranslate = await _translationService.TranslateAsync(
+                                combined,
+                                translationSettings.TargetLanguage);
+
+                            if (embedTranslate == null)
+                                continue;
+
+                            if (string.Equals(embedTranslate.DetectedSourceLanguage, translationSettings.TargetLanguage, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            if (string.Equals(embedTranslate.OriginalText.Trim(), embedTranslate.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            string translated = embedTranslate.TranslatedText;
+                            if (translated.Length > 4000)
+                                translated = translated[..4000];
+
+                            var translatedEmbed = new EmbedBuilder()
+                                .WithTitle("🌍 Embedded Content Translation")
+                                .WithDescription(translated)
+                                .AddField("Author", message.Author.Mention, true)
+                                .AddField("Detected", embedTranslate.DetectedSourceLanguage, true)
+                                .AddField("Target", embedTranslate.TargetLanguage, true)
+                                .WithColor(Color.Blue)
+                                .Build();
+
+                            await textChannel.SendMessageAsync(embed: translatedEmbed);
+                        }
                     }
                 }
+                catch (Exception ex)
+                {
+                    LogPermissionFailure(textChannel, "Auto-translating post", ex);
+                }
+            }
 
-                // Translate text from generated embeds too
-                IReadOnlyCollection<Embed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
+            // Translate text from generated embeds too
+            IReadOnlyCollection<IEmbed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
 
-                foreach (Embed sourceEmbed in resolvedEmbeds)
+                foreach (IEmbed sourceEmbed in resolvedEmbeds)
                 {
                     if (!EmbedHasTranslatableText(sourceEmbed))
                         continue;
@@ -1321,7 +1394,7 @@ class Program
         }
     }
 
-    private async Task<IReadOnlyCollection<Embed>> GetResolvedEmbedsAsync(SocketUserMessage message, SocketTextChannel textChannel)
+    private async Task<IReadOnlyCollection<IEmbed>> GetResolvedEmbedsAsync(SocketUserMessage message, SocketTextChannel textChannel)
     {
         if (message.Embeds != null && message.Embeds.Count > 0)
             return message.Embeds;
@@ -1332,7 +1405,7 @@ class Program
         return refreshedMessage?.Embeds ?? Array.Empty<Embed>();
     }
 
-    private bool EmbedHasTranslatableText(Embed embed)
+    private bool EmbedHasTranslatableText(IEmbed embed)
     {
         if (!string.IsNullOrWhiteSpace(embed.Title))
             return true;
@@ -1355,7 +1428,7 @@ class Program
     }
 
     private async Task<Embed?> BuildTranslatedEmbedAsync(
-        Embed sourceEmbed,
+        IEmbed sourceEmbed,
         SocketUserMessage originalMessage,
         string targetLanguage)
     {
