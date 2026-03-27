@@ -348,16 +348,13 @@ class Program
                         }
                     }
 
-                    // ===== EMBED TRANSLATION (NO HELPERS VERSION) =====
-
-                    // wait for embeds to load
                     await Task.Delay(2000);
 
-                    var refreshed = await textChannel.GetMessageAsync(message.Id);
+                    IMessage refreshedMessage = await textChannel.GetMessageAsync(message.Id);
 
-                    if (refreshed?.Embeds != null)
+                    if (refreshedMessage?.Embeds != null)
                     {
-                        foreach (var embedData in refreshed.Embeds)
+                        foreach (var embedData in refreshedMessage.Embeds)
                         {
                             string combined = "";
 
@@ -395,13 +392,13 @@ class Program
                             if (string.Equals(embedTranslate.OriginalText.Trim(), embedTranslate.TranslatedText.Trim(), StringComparison.OrdinalIgnoreCase))
                                 continue;
 
-                            string translated = embedTranslate.TranslatedText;
-                            if (translated.Length > 4000)
-                                translated = translated[..4000];
+                            string translatedEmbedText = embedTranslate.TranslatedText;
+                            if (translatedEmbedText.Length > 4000)
+                                translatedEmbedText = translatedEmbedText[..4000];
 
                             var translatedEmbed = new EmbedBuilder()
                                 .WithTitle("🌍 Embedded Content Translation")
-                                .WithDescription(translated)
+                                .WithDescription(translatedEmbedText)
                                 .AddField("Author", message.Author.Mention, true)
                                 .AddField("Detected", embedTranslate.DetectedSourceLanguage, true)
                                 .AddField("Target", embedTranslate.TargetLanguage, true)
@@ -417,9 +414,15 @@ class Program
                     LogPermissionFailure(textChannel, "Auto-translating post", ex);
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            LogPermissionFailure(textChannel, "Relaying message", ex);
+        }
+    }
 
-            // Translate text from generated embeds too
-            IReadOnlyCollection<IEmbed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
+    // Translate text from generated embeds too
+    IReadOnlyCollection<IEmbed> resolvedEmbeds = await GetResolvedEmbedsAsync(userMessage, textChannel);
 
                 foreach (IEmbed sourceEmbed in resolvedEmbeds)
                 {
