@@ -345,12 +345,13 @@ class Program
                     await textChannel.SendMessageAsync(embed: embed);
                 }
             }
-
+        }
         catch (Exception ex)
         {
             LogPermissionFailure(textChannel, "Relaying message", ex);
         }
     }
+}
 
     private async Task<RestWebhook?> GetOrCreateWebhookAsync(SocketTextChannel textChannel)
     {
