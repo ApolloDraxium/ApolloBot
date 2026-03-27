@@ -350,8 +350,6 @@ class Program
         {
             LogPermissionFailure(textChannel, "Relaying message", ex);
         }
-    }
-}
 
     private async Task<RestWebhook?> GetOrCreateWebhookAsync(SocketTextChannel textChannel)
     {
