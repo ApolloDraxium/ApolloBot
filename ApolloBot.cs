@@ -99,7 +99,11 @@ class Program
 
     private static readonly TimeSpan ButtonCooldown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
-    private readonly DateTime _startedAtUtc = DateTime.UtcNow;
+    private long _accumulatedUptimeSeconds = 0;
+    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
+    private long _accumulatedUptimeSeconds = 0;
+    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
+    private List<UptimeSession> _uptimeHistory = new();
 
     static Task Main(string[] args) => new Program().MainAsync();
 
@@ -137,6 +141,24 @@ class Program
         await _client.StartAsync();
 
         _ = Task.Run(StartStatsHttpServerAsync);
+
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(60));
+
+                var now = DateTime.UtcNow;
+                long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
+
+                if (sessionSeconds > 0)
+                {
+                    _accumulatedUptimeSeconds += sessionSeconds;
+                    _lastStartedAtUtc = now;
+                    SaveBotStatsState();
+                }
+            }
+        });
 
         Console.WriteLine("Bot is running.");
         await Task.Delay(-1);
@@ -1442,7 +1464,7 @@ class Program
         if (span.TotalHours >= 1)
             return $"{span.Hours}h {span.Minutes}m";
 
-        return $"{span.Minutes}m";
+        return $"{Math.Max(1, span.Minutes)}m";
     }
 
     private List<string> GetPlatformsInText(string text)
@@ -1718,6 +1740,31 @@ class Program
             _embedsFixedCount = loaded.EmbedsFixedCount;
             _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
             _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
+
+            var now = DateTime.UtcNow;
+
+            if (loaded.LastStartedAtUtc != default)
+            {
+                long previousSessionSeconds = (long)(now - loaded.LastStartedAtUtc).TotalSeconds;
+
+                if (previousSessionSeconds > 0)
+                {
+                    _uptimeHistory.Insert(0, new UptimeSession
+                    {
+                        StartedAtUtc = loaded.LastStartedAtUtc,
+                        EndedAtUtc = now,
+                        DurationSeconds = previousSessionSeconds
+                    });
+                }
+            }
+
+            _lastStartedAtUtc = now;
+
+            Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
+            Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
+            Console.WriteLine($"Loaded uptime history entries: {_uptimeHistory.Count}");
+            _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
+            _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
             _sessionStartUtc = DateTime.UtcNow;
             _lastStartedAtUtc = DateTime.UtcNow;
 
@@ -1902,19 +1949,27 @@ class Program
     {
         int serverCount = _client?.Guilds.Count ?? 0;
         int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
-        var now = DateTime.UtcNow;
-        long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
-        long totalSeconds = _accumulatedUptimeSeconds + sessionSeconds;
 
-        TimeSpan uptime = TimeSpan.FromSeconds(totalSeconds);
+        var now = DateTime.UtcNow;
+        long currentSessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
+        long totalUptimeSeconds = _accumulatedUptimeSeconds + currentSessionSeconds;
+
+        long longestSessionSeconds = _uptimeHistory.Count == 0
+            ? currentSessionSeconds
+            : Math.Max(_uptimeHistory.Max(x => x.DurationSeconds), currentSessionSeconds);
 
         var payload = new PublicStatsPayload
         {
             EmbedsFixed = _embedsFixedCount,
             ServerCount = serverCount,
             TotalUsers = totalUsers,
-            Uptime = FormatDuration(uptime),
-            PlatformCount = _providers.Count
+            Uptime = FormatDuration(TimeSpan.FromSeconds(totalUptimeSeconds)),
+            PlatformCount = _providers.Count,
+            TotalUptimeSeconds = totalUptimeSeconds,
+            CurrentSessionSeconds = currentSessionSeconds,
+            LongestSessionSeconds = longestSessionSeconds,
+            RestartCount = _uptimeHistory.Count,
+            UptimeHistory = _uptimeHistory.Take(10).ToList()
         };
 
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions
@@ -2092,6 +2147,13 @@ class UptimeSession
     public long DurationSeconds { get; set; }
 }
 
+class UptimeSession
+{
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime EndedAtUtc { get; set; }
+    public long DurationSeconds { get; set; }
+}
+
 class PublicStatsPayload
 {
     public long EmbedsFixed { get; set; }
@@ -2099,6 +2161,13 @@ class PublicStatsPayload
     public int TotalUsers { get; set; }
     public string Uptime { get; set; } = "";
     public int PlatformCount { get; set; }
+
+    public long TotalUptimeSeconds { get; set; }
+    public long CurrentSessionSeconds { get; set; }
+    public long LongestSessionSeconds { get; set; }
+    public int RestartCount { get; set; }
+
+    public List<UptimeSession> UptimeHistory { get; set; } = new();
 }
 
 class GuildSettings
