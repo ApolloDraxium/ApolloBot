@@ -21,6 +21,10 @@ class Program
     private readonly Random _random = new();
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
+    private long _accumulatedUptimeSeconds = 0;
+    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
+    private List<UptimeSession> _uptimeHistory = new();
+    private DateTime _sessionStartUtc = DateTime.UtcNow;
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -1433,15 +1437,12 @@ class Program
     private string FormatDuration(TimeSpan span)
     {
         if (span.TotalDays >= 1)
-            return $"{(int)span.TotalDays}d {span.Hours}h {span.Minutes}m";
+            return $"{(int)span.TotalDays}d {span.Hours}h";
 
         if (span.TotalHours >= 1)
-            return $"{span.Hours}h {span.Minutes}m {span.Seconds}s";
+            return $"{span.Hours}h {span.Minutes}m";
 
-        if (span.TotalMinutes >= 1)
-            return $"{span.Minutes}m {span.Seconds}s";
-
-        return $"{span.Seconds}s";
+        return $"{span.Minutes}m";
     }
 
     private List<string> GetPlatformsInText(string text)
@@ -1672,7 +1673,10 @@ class Program
         {
             var state = new BotStatsState
             {
-                EmbedsFixedCount = _embedsFixedCount
+                EmbedsFixedCount = _embedsFixedCount,
+                AccumulatedUptimeSeconds = _accumulatedUptimeSeconds,
+                LastStartedAtUtc = _lastStartedAtUtc,
+                UptimeHistory = _uptimeHistory
             };
 
             string json = JsonSerializer.Serialize(state, new JsonSerializerOptions
@@ -1695,6 +1699,7 @@ class Program
             if (!File.Exists(BotStatsStateFilePath))
             {
                 Console.WriteLine("No bot stats state file found. Starting fresh.");
+                _lastStartedAtUtc = DateTime.UtcNow;
                 return;
             }
 
@@ -1705,12 +1710,19 @@ class Program
 
             if (loaded == null)
             {
-                Console.WriteLine("Bot stats state file was empty or invalid. Starting fresh.");
+                Console.WriteLine("Bot stats state file invalid. Starting fresh.");
+                _lastStartedAtUtc = DateTime.UtcNow;
                 return;
             }
 
             _embedsFixedCount = loaded.EmbedsFixedCount;
-            Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
+            _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
+            _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
+            _sessionStartUtc = DateTime.UtcNow;
+            _lastStartedAtUtc = DateTime.UtcNow;
+
+            Console.WriteLine($"Loaded embeds fixed: {_embedsFixedCount}");
+            Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
         }
         catch (Exception ex)
         {
@@ -1746,13 +1758,20 @@ class Program
 
             _ = Task.Run(async () =>
             {
-                try
+                while (true)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(12));
-                    await pingMessage.DeleteAsync();
-                }
-                catch
-                {
+                    await Task.Delay(TimeSpan.FromSeconds(60));
+
+                    var now = DateTime.UtcNow;
+                    long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
+
+                    // Add to accumulated uptime
+                    _accumulatedUptimeSeconds += sessionSeconds;
+
+                    // Update last tick
+                    _lastStartedAtUtc = now;
+
+                    SaveBotStatsState();
                 }
             });
         }
@@ -1825,7 +1844,7 @@ class Program
                 if (path.StartsWith("/stats", StringComparison.OrdinalIgnoreCase))
                 {
                     string json = BuildPublicStatsJson();
-
+                    uptimeHistory = _uptimeHistory.Take(10)
                     await WriteHttpResponseAsync(
                         stream,
                         "200 OK",
@@ -1883,7 +1902,11 @@ class Program
     {
         int serverCount = _client?.Guilds.Count ?? 0;
         int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
-        TimeSpan uptime = DateTime.UtcNow - _startedAtUtc;
+        var now = DateTime.UtcNow;
+        long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
+        long totalSeconds = _accumulatedUptimeSeconds + sessionSeconds;
+
+        TimeSpan uptime = TimeSpan.FromSeconds(totalSeconds);
 
         var payload = new PublicStatsPayload
         {
@@ -2057,6 +2080,16 @@ class RollParseResult
 class BotStatsState
 {
     public long EmbedsFixedCount { get; set; }
+    public long AccumulatedUptimeSeconds { get; set; }
+    public DateTime LastStartedAtUtc { get; set; }
+    public List<UptimeSession> UptimeHistory { get; set; } = new();
+}
+
+class UptimeSession
+{
+    public DateTime StartedAtUtc { get; set; }
+    public DateTime EndedAtUtc { get; set; }
+    public long DurationSeconds { get; set; }
 }
 
 class PublicStatsPayload
