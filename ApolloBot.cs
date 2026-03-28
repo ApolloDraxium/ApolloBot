@@ -1832,6 +1832,18 @@ class Program
                 DateTime previousStartUtc = loaded.CurrentSessionStartedAtUtc;
                 DateTime previousHeartbeatUtc = loaded.LastHeartbeatUtc;
 
+                if (previousStartUtc == default && loaded.LegacyLastStartedAtUtc != default)
+                {
+                    previousStartUtc = loaded.LegacyLastStartedAtUtc;
+                }
+
+                if (previousHeartbeatUtc == default)
+                {
+                    DateTime fileWriteUtc = File.GetLastWriteTimeUtc(BotStatsStateFilePath);
+                    if (fileWriteUtc != default)
+                        previousHeartbeatUtc = fileWriteUtc;
+                }
+
                 if (previousStartUtc != default &&
                     previousHeartbeatUtc != default &&
                     previousHeartbeatUtc >= previousStartUtc)
@@ -2050,16 +2062,32 @@ class Program
         int serverCount = _client?.Guilds.Count ?? 0;
         int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
 
-        long currentSessionSeconds = GetCurrentSessionSeconds();
-        long totalUptimeSeconds = GetTotalUptimeSeconds();
+        long embedsFixed;
+        long currentSessionSeconds;
+        long totalUptimeSeconds;
+        long longestSessionSeconds;
+        int restartCount;
+        DateTime activeSessionStartedAtUtc;
+        DateTime lastHeartbeatUtc;
+        List<UptimeSession> history;
 
-        long longestSessionSeconds = _uptimeHistory.Count == 0
-            ? currentSessionSeconds
-            : Math.Max(_uptimeHistory.Max(x => x.DurationSeconds), currentSessionSeconds);
+        lock (_statsLock)
+        {
+            embedsFixed = _embedsFixedCount;
+            currentSessionSeconds = Math.Max(0, (long)(DateTime.UtcNow - _sessionStartedAtUtc).TotalSeconds);
+            totalUptimeSeconds = _accumulatedUptimeSeconds + currentSessionSeconds;
+            longestSessionSeconds = _uptimeHistory.Count == 0
+                ? currentSessionSeconds
+                : Math.Max(_uptimeHistory.Max(x => x.DurationSeconds), currentSessionSeconds);
+            restartCount = _uptimeHistory.Count;
+            activeSessionStartedAtUtc = _sessionStartedAtUtc;
+            lastHeartbeatUtc = _lastHeartbeatUtc;
+            history = _uptimeHistory.Take(10).ToList();
+        }
 
         var payload = new PublicStatsPayload
         {
-            EmbedsFixed = _embedsFixedCount,
+            EmbedsFixed = embedsFixed,
             ServerCount = serverCount,
             TotalUsers = totalUsers,
             Uptime = FormatDuration(TimeSpan.FromSeconds(totalUptimeSeconds)),
@@ -2067,8 +2095,10 @@ class Program
             TotalUptimeSeconds = totalUptimeSeconds,
             CurrentSessionSeconds = currentSessionSeconds,
             LongestSessionSeconds = longestSessionSeconds,
-            RestartCount = _uptimeHistory.Count,
-            UptimeHistory = _uptimeHistory.Take(10).ToList()
+            RestartCount = restartCount,
+            ActiveSessionStartedAtUtc = activeSessionStartedAtUtc,
+            LastHeartbeatUtc = lastHeartbeatUtc,
+            UptimeHistory = history
         };
 
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions
@@ -2237,6 +2267,7 @@ class BotStatsState
     public long AccumulatedUptimeSeconds { get; set; }
     public DateTime CurrentSessionStartedAtUtc { get; set; }
     public DateTime LastHeartbeatUtc { get; set; }
+    public DateTime LegacyLastStartedAtUtc { get; set; }
     public List<UptimeSession> UptimeHistory { get; set; } = new();
 }
 
@@ -2258,6 +2289,8 @@ class PublicStatsPayload
     public long CurrentSessionSeconds { get; set; }
     public long LongestSessionSeconds { get; set; }
     public int RestartCount { get; set; }
+    public DateTime ActiveSessionStartedAtUtc { get; set; }
+    public DateTime LastHeartbeatUtc { get; set; }
     public List<UptimeSession> UptimeHistory { get; set; } = new();
 }
 
