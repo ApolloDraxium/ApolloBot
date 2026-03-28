@@ -2161,12 +2161,10 @@ class PublicStatsPayload
     public int TotalUsers { get; set; }
     public string Uptime { get; set; } = "";
     public int PlatformCount { get; set; }
-
     public long TotalUptimeSeconds { get; set; }
     public long CurrentSessionSeconds { get; set; }
     public long LongestSessionSeconds { get; set; }
     public int RestartCount { get; set; }
-
     public List<UptimeSession> UptimeHistory { get; set; } = new();
 }
 
