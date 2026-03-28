@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Discord;
@@ -22,8 +22,10 @@ class Program
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
-    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
+    private DateTime _sessionStartedAtUtc = DateTime.UtcNow;
+    private DateTime _lastHeartbeatUtc = DateTime.UtcNow;
     private List<UptimeSession> _uptimeHistory = new();
+    private readonly object _statsLock = new();
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -108,6 +110,7 @@ class Program
         LoadGuildSettings();
         LoadUserIgnoreSettings();
         LoadBotStatsState();
+        RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
         {
@@ -141,16 +144,7 @@ class Program
             while (true)
             {
                 await Task.Delay(TimeSpan.FromSeconds(60));
-
-                var now = DateTime.UtcNow;
-                long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
-
-                if (sessionSeconds > 0)
-                {
-                    _accumulatedUptimeSeconds += sessionSeconds;
-                    _lastStartedAtUtc = now;
-                    SaveBotStatsState();
-                }
+                SaveBotStatsHeartbeat();
             }
         });
 
@@ -432,9 +426,8 @@ class Program
             int relayCount = _relayStates.Count;
             int guildSettingsCount = _guildSettings.Count;
             int ignoredUsersCount = _userIgnoreSettings.Count;
-            var now = DateTime.UtcNow;
-            long currentSessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
-            long totalUptimeSeconds = _accumulatedUptimeSeconds + currentSessionSeconds;
+            long currentSessionSeconds = GetCurrentSessionSeconds();
+            long totalUptimeSeconds = GetTotalUptimeSeconds();
             TimeSpan uptime = TimeSpan.FromSeconds(totalUptimeSeconds);
 
             var embed = new EmbedBuilder()
@@ -1459,9 +1452,12 @@ class Program
             return $"{(int)span.TotalDays}d {span.Hours}h";
 
         if (span.TotalHours >= 1)
-            return $"{span.Hours}h {span.Minutes}m";
+            return $"{(int)span.TotalHours}h {span.Minutes}m";
 
-        return $"{Math.Max(1, span.Minutes)}m";
+        if (span.TotalMinutes >= 1)
+            return $"{span.Minutes}m";
+
+        return $"{Math.Max(1, span.Seconds)}s";
     }
 
     private List<string> GetPlatformsInText(string text)
@@ -1682,21 +1678,59 @@ class Program
 
     private void IncrementEmbedsFixedCount()
     {
-        _embedsFixedCount++;
-        SaveBotStatsState();
+        lock (_statsLock)
+        {
+            _embedsFixedCount++;
+        }
+
+        SaveBotStatsHeartbeat();
     }
 
-    private void SaveBotStatsState()
+    private void RegisterShutdownHandlers()
+    {
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => FinalizeCurrentSession("ProcessExit");
+        Console.CancelKeyPress += (_, _) => FinalizeCurrentSession("CancelKeyPress");
+    }
+
+    private long GetCurrentSessionSeconds()
+    {
+        lock (_statsLock)
+        {
+            return Math.Max(0, (long)(DateTime.UtcNow - _sessionStartedAtUtc).TotalSeconds);
+        }
+    }
+
+    private long GetTotalUptimeSeconds()
+    {
+        lock (_statsLock)
+        {
+            long currentSessionSeconds = Math.Max(0, (long)(DateTime.UtcNow - _sessionStartedAtUtc).TotalSeconds);
+            return _accumulatedUptimeSeconds + currentSessionSeconds;
+        }
+    }
+
+    private void SaveBotStatsHeartbeat()
     {
         try
         {
-            var state = new BotStatsState
+            BotStatsState state;
+
+            lock (_statsLock)
             {
-                EmbedsFixedCount = _embedsFixedCount,
-                AccumulatedUptimeSeconds = _accumulatedUptimeSeconds,
-                LastStartedAtUtc = _lastStartedAtUtc,
-                UptimeHistory = _uptimeHistory
-            };
+                _lastHeartbeatUtc = DateTime.UtcNow;
+
+                state = new BotStatsState
+                {
+                    EmbedsFixedCount = _embedsFixedCount,
+                    AccumulatedUptimeSeconds = _accumulatedUptimeSeconds,
+                    CurrentSessionStartedAtUtc = _sessionStartedAtUtc,
+                    LastHeartbeatUtc = _lastHeartbeatUtc,
+                    UptimeHistory = _uptimeHistory
+                        .OrderByDescending(x => x.EndedAtUtc)
+                        .Take(100)
+                        .ToList()
+                };
+            }
 
             string json = JsonSerializer.Serialize(state, new JsonSerializerOptions
             {
@@ -1711,14 +1745,63 @@ class Program
         }
     }
 
+    private void FinalizeCurrentSession(string reason)
+    {
+        try
+        {
+            lock (_statsLock)
+            {
+                DateTime endUtc = _lastHeartbeatUtc > _sessionStartedAtUtc
+                    ? _lastHeartbeatUtc
+                    : DateTime.UtcNow;
+
+                long durationSeconds = Math.Max(0, (long)(endUtc - _sessionStartedAtUtc).TotalSeconds);
+
+                if (durationSeconds > 0)
+                {
+                    _accumulatedUptimeSeconds += durationSeconds;
+                    _uptimeHistory.Insert(0, new UptimeSession
+                    {
+                        StartedAtUtc = _sessionStartedAtUtc,
+                        EndedAtUtc = endUtc,
+                        DurationSeconds = durationSeconds
+                    });
+
+                    _uptimeHistory = _uptimeHistory
+                        .OrderByDescending(x => x.EndedAtUtc)
+                        .Take(100)
+                        .ToList();
+                }
+
+                _sessionStartedAtUtc = DateTime.UtcNow;
+                _lastHeartbeatUtc = _sessionStartedAtUtc;
+            }
+
+            SaveBotStatsHeartbeat();
+            Console.WriteLine($"Finalized uptime session due to {reason}.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to finalize current session during {reason}: {ex}");
+        }
+    }
+
     private void LoadBotStatsState()
     {
         try
         {
+            DateTime now = DateTime.UtcNow;
+
             if (!File.Exists(BotStatsStateFilePath))
             {
                 Console.WriteLine("No bot stats state file found. Starting fresh.");
-                _lastStartedAtUtc = DateTime.UtcNow;
+                lock (_statsLock)
+                {
+                    _sessionStartedAtUtc = now;
+                    _lastHeartbeatUtc = now;
+                }
+
+                SaveBotStatsHeartbeat();
                 return;
             }
 
@@ -1730,40 +1813,75 @@ class Program
             if (loaded == null)
             {
                 Console.WriteLine("Bot stats state file invalid. Starting fresh.");
-                _lastStartedAtUtc = DateTime.UtcNow;
+                lock (_statsLock)
+                {
+                    _sessionStartedAtUtc = now;
+                    _lastHeartbeatUtc = now;
+                }
+
+                SaveBotStatsHeartbeat();
                 return;
             }
 
-            _embedsFixedCount = loaded.EmbedsFixedCount;
-            _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
-            _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
-
-            var now = DateTime.UtcNow;
-
-            if (loaded.LastStartedAtUtc != default)
+            lock (_statsLock)
             {
-                long previousSessionSeconds = (long)(now - loaded.LastStartedAtUtc).TotalSeconds;
+                _embedsFixedCount = loaded.EmbedsFixedCount;
+                _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
+                _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
 
-                if (previousSessionSeconds > 0)
+                DateTime previousStartUtc = loaded.CurrentSessionStartedAtUtc;
+                DateTime previousHeartbeatUtc = loaded.LastHeartbeatUtc;
+
+                if (previousStartUtc != default &&
+                    previousHeartbeatUtc != default &&
+                    previousHeartbeatUtc >= previousStartUtc)
                 {
-                    _uptimeHistory.Insert(0, new UptimeSession
+                    long previousSessionSeconds = Math.Max(0, (long)(previousHeartbeatUtc - previousStartUtc).TotalSeconds);
+
+                    if (previousSessionSeconds > 0)
                     {
-                        StartedAtUtc = loaded.LastStartedAtUtc,
-                        EndedAtUtc = now,
-                        DurationSeconds = previousSessionSeconds
-                    });
+                        bool alreadyTracked = _uptimeHistory.Any(x =>
+                            x.StartedAtUtc == previousStartUtc &&
+                            x.EndedAtUtc == previousHeartbeatUtc &&
+                            x.DurationSeconds == previousSessionSeconds);
+
+                        if (!alreadyTracked)
+                        {
+                            _accumulatedUptimeSeconds += previousSessionSeconds;
+                            _uptimeHistory.Insert(0, new UptimeSession
+                            {
+                                StartedAtUtc = previousStartUtc,
+                                EndedAtUtc = previousHeartbeatUtc,
+                                DurationSeconds = previousSessionSeconds
+                            });
+                        }
+                    }
                 }
+
+                _uptimeHistory = _uptimeHistory
+                    .OrderByDescending(x => x.EndedAtUtc)
+                    .Take(100)
+                    .ToList();
+
+                _sessionStartedAtUtc = now;
+                _lastHeartbeatUtc = now;
+
+                Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
+                Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
+                Console.WriteLine($"Loaded uptime history entries: {_uptimeHistory.Count}");
             }
 
-            _lastStartedAtUtc = now;
-
-            Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
-            Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
-            Console.WriteLine($"Loaded uptime history entries: {_uptimeHistory.Count}");
+            SaveBotStatsHeartbeat();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load bot stats state: {ex}");
+
+            lock (_statsLock)
+            {
+                _sessionStartedAtUtc = DateTime.UtcNow;
+                _lastHeartbeatUtc = _sessionStartedAtUtc;
+            }
         }
     }
 
@@ -1932,9 +2050,8 @@ class Program
         int serverCount = _client?.Guilds.Count ?? 0;
         int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
 
-        var now = DateTime.UtcNow;
-        long currentSessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
-        long totalUptimeSeconds = _accumulatedUptimeSeconds + currentSessionSeconds;
+        long currentSessionSeconds = GetCurrentSessionSeconds();
+        long totalUptimeSeconds = GetTotalUptimeSeconds();
 
         long longestSessionSeconds = _uptimeHistory.Count == 0
             ? currentSessionSeconds
@@ -2118,7 +2235,8 @@ class BotStatsState
 {
     public long EmbedsFixedCount { get; set; }
     public long AccumulatedUptimeSeconds { get; set; }
-    public DateTime LastStartedAtUtc { get; set; }
+    public DateTime CurrentSessionStartedAtUtc { get; set; }
+    public DateTime LastHeartbeatUtc { get; set; }
     public List<UptimeSession> UptimeHistory { get; set; } = new();
 }
 
