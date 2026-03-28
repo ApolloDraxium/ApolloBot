@@ -24,7 +24,6 @@ class Program
     private long _accumulatedUptimeSeconds = 0;
     private DateTime _lastStartedAtUtc = DateTime.UtcNow;
     private List<UptimeSession> _uptimeHistory = new();
-    private DateTime _sessionStartUtc = DateTime.UtcNow;
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
@@ -99,11 +98,6 @@ class Program
 
     private static readonly TimeSpan ButtonCooldown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
-    private long _accumulatedUptimeSeconds = 0;
-    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
-    private long _accumulatedUptimeSeconds = 0;
-    private DateTime _lastStartedAtUtc = DateTime.UtcNow;
-    private List<UptimeSession> _uptimeHistory = new();
 
     static Task Main(string[] args) => new Program().MainAsync();
 
@@ -438,7 +432,10 @@ class Program
             int relayCount = _relayStates.Count;
             int guildSettingsCount = _guildSettings.Count;
             int ignoredUsersCount = _userIgnoreSettings.Count;
-            TimeSpan uptime = DateTime.UtcNow - _startedAtUtc;
+            var now = DateTime.UtcNow;
+            long currentSessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
+            long totalUptimeSeconds = _accumulatedUptimeSeconds + currentSessionSeconds;
+            TimeSpan uptime = TimeSpan.FromSeconds(totalUptimeSeconds);
 
             var embed = new EmbedBuilder()
                 .WithTitle("Bot Stats")
@@ -1763,13 +1760,6 @@ class Program
             Console.WriteLine($"Loaded embeds fixed count: {_embedsFixedCount}");
             Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
             Console.WriteLine($"Loaded uptime history entries: {_uptimeHistory.Count}");
-            _accumulatedUptimeSeconds = loaded.AccumulatedUptimeSeconds;
-            _uptimeHistory = loaded.UptimeHistory ?? new List<UptimeSession>();
-            _sessionStartUtc = DateTime.UtcNow;
-            _lastStartedAtUtc = DateTime.UtcNow;
-
-            Console.WriteLine($"Loaded embeds fixed: {_embedsFixedCount}");
-            Console.WriteLine($"Loaded accumulated uptime: {_accumulatedUptimeSeconds}s");
         }
         catch (Exception ex)
         {
@@ -1805,20 +1795,13 @@ class Program
 
             _ = Task.Run(async () =>
             {
-                while (true)
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(60));
-
-                    var now = DateTime.UtcNow;
-                    long sessionSeconds = (long)(now - _lastStartedAtUtc).TotalSeconds;
-
-                    // Add to accumulated uptime
-                    _accumulatedUptimeSeconds += sessionSeconds;
-
-                    // Update last tick
-                    _lastStartedAtUtc = now;
-
-                    SaveBotStatsState();
+                    await Task.Delay(TimeSpan.FromSeconds(12));
+                    await pingMessage.DeleteAsync();
+                }
+                catch
+                {
                 }
             });
         }
@@ -1890,9 +1873,8 @@ class Program
 
                 if (path.StartsWith("/stats", StringComparison.OrdinalIgnoreCase))
                 {
-                    string json = BuildPublicStatsJson();
-                    uptimeHistory = _uptimeHistory.Take(10)
-                    await WriteHttpResponseAsync(
+                string json = BuildPublicStatsJson();
+                await WriteHttpResponseAsync(
                         stream,
                         "200 OK",
                         "application/json; charset=utf-8",
@@ -2138,13 +2120,6 @@ class BotStatsState
     public long AccumulatedUptimeSeconds { get; set; }
     public DateTime LastStartedAtUtc { get; set; }
     public List<UptimeSession> UptimeHistory { get; set; } = new();
-}
-
-class UptimeSession
-{
-    public DateTime StartedAtUtc { get; set; }
-    public DateTime EndedAtUtc { get; set; }
-    public long DurationSeconds { get; set; }
 }
 
 class UptimeSession
