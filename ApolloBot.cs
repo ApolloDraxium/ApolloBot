@@ -669,7 +669,10 @@ class Program
 
     private async Task HandleSpecialUserCommand(SocketTextChannel channel, string[] parts)
     {
-        if (parts.Length < 2)
+        int actionIndex = parts.Length > 0 && parts[0].Equals("!bot", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+        int userIdIndex = actionIndex + 1;
+
+        if (parts.Length <= actionIndex)
         {
             await channel.SendMessageAsync(
                 "Usage:\n" +
@@ -680,7 +683,7 @@ class Program
             return;
         }
 
-        string action = parts[1].ToLowerInvariant();
+        string action = parts[actionIndex].ToLowerInvariant();
 
         if (action == "list")
         {
@@ -703,7 +706,7 @@ class Program
             return;
         }
 
-        if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong userId))
+        if (parts.Length <= userIdIndex || !ulong.TryParse(parts[userIdIndex], out ulong userId))
         {
             await channel.SendMessageAsync("Please provide a valid user ID.");
             return;
@@ -736,7 +739,11 @@ class Program
 
     private async Task HandlePlannedUpdateOwnerCommand(SocketTextChannel channel, string[] parts)
     {
-        if (parts.Length < 2)
+        int actionIndex = parts.Length > 0 && parts[0].Equals("!bot", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+        int idIndex = actionIndex + 1;
+        int textStartIndex = actionIndex + 2;
+
+        if (parts.Length <= actionIndex)
         {
             await channel.SendMessageAsync(
                 "Usage:\n" +
@@ -748,7 +755,7 @@ class Program
             return;
         }
 
-        string action = parts[1].ToLowerInvariant();
+        string action = parts[actionIndex].ToLowerInvariant();
 
         if (action == "list")
         {
@@ -764,7 +771,7 @@ class Program
             return;
         }
 
-        if (parts.Length < 3 || !int.TryParse(parts[2], out int id) || id <= 0)
+        if (parts.Length <= idIndex || !int.TryParse(parts[idIndex], out int id) || id <= 0)
         {
             await channel.SendMessageAsync("Please provide a valid positive update ID.");
             return;
@@ -781,13 +788,13 @@ class Program
             return;
         }
 
-        if (parts.Length < 4)
+        if (parts.Length <= textStartIndex)
         {
             await channel.SendMessageAsync("Please include update text.");
             return;
         }
 
-        string updateText = string.Join(" ", parts.Skip(3)).Trim();
+        string updateText = string.Join(" ", parts.Skip(textStartIndex)).Trim();
 
         if (string.IsNullOrWhiteSpace(updateText))
         {
