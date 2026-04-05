@@ -387,17 +387,11 @@ class Program
             if (parts.Length < 5)
             {
                 await textChannel.SendMessageAsync(
-                    "Usage:
-" +
-                    "`!bot status <type> <status> <text>`
-" +
-                    "Types: playing, watching, listening, streaming
-" +
-                    "Status: online, idle, dnd, invisible
-
-" +
-                    "Example:
-" +
+                    "Usage:\n" +
+                    "`!bot status <type> <status> <text>`\n" +
+                    "Types: playing, watching, listening, streaming\n" +
+                    "Status: online, idle, dnd, invisible\n\n" +
+                    "Example:\n" +
                     "`!bot status watching online Fixing embeds`");
                 return;
             }
@@ -424,8 +418,7 @@ class Program
                 if (parts.Length < 6)
                 {
                     await textChannel.SendMessageAsync(
-                        "Usage for streaming:
-`!bot status streaming <status> <url> <text>`");
+                        "Usage for streaming:\n`!bot status streaming <status> <url> <text>`");
                     return;
                 }
 
