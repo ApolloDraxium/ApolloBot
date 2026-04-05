@@ -92,6 +92,11 @@ class Program
     private static readonly string UserIgnoreSettingsFilePath =
         Path.Combine(DataDirectory, "user_ignore_settings.json");
 
+    private static readonly string PresenceFilePath =
+        Path.Combine(DataDirectory, "bot_presence.json");
+
+    private BotPresenceSettings _presenceSettings = new();
+
     private static readonly HashSet<ulong> BotOwnerIds = new()
     {
         127877921464385537,
@@ -110,6 +115,7 @@ class Program
         LoadGuildSettings();
         LoadUserIgnoreSettings();
         LoadBotStatsState();
+        LoadPresenceSettings();
         RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -166,7 +172,7 @@ class Program
         Console.WriteLine($"Loaded {_userIgnoreSettings.Count} user ignore profile(s).");
 
         if (_client != null)
-            await _client.SetActivityAsync(new Game("Running 24/7", ActivityType.Watching));
+            await ApplyPresenceAsync();
 
         if (!_slashCommandsRegistered)
         {
@@ -252,6 +258,9 @@ class Program
 
         if (content.StartsWith("!bot", StringComparison.OrdinalIgnoreCase))
         {
+            if (!IsBotOwner(userMessage.Author))
+                return;
+
             await HandleBotCommand(userMessage, textChannel);
             return;
         }
@@ -359,12 +368,6 @@ class Program
         string[] parts = message.Content
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        if (!IsBotOwner(message.Author))
-        {
-            await textChannel.SendMessageAsync("🚫 You don't have access to that command.");
-            return;
-        }
-
         if (parts.Length < 2)
         {
             await SendBotHelp(textChannel);
@@ -376,6 +379,79 @@ class Program
         if (sub == "help")
         {
             await SendBotHelp(textChannel);
+            return;
+        }
+
+        if (sub == "status")
+        {
+            if (parts.Length < 5)
+            {
+                await textChannel.SendMessageAsync(
+                    "Usage:
+" +
+                    "`!bot status <type> <status> <text>`
+" +
+                    "Types: playing, watching, listening, streaming
+" +
+                    "Status: online, idle, dnd, invisible
+
+" +
+                    "Example:
+" +
+                    "`!bot status watching online Fixing embeds`");
+                return;
+            }
+
+            string type = parts[2].ToLowerInvariant();
+            string status = parts[3].ToLowerInvariant();
+            string textValue;
+            string? streamUrl = null;
+
+            if (type is not ("playing" or "watching" or "listening" or "streaming"))
+            {
+                await textChannel.SendMessageAsync("Invalid type. Use: playing, watching, listening, or streaming.");
+                return;
+            }
+
+            if (status is not ("online" or "idle" or "dnd" or "invisible"))
+            {
+                await textChannel.SendMessageAsync("Invalid status. Use: online, idle, dnd, or invisible.");
+                return;
+            }
+
+            if (type == "streaming")
+            {
+                if (parts.Length < 6)
+                {
+                    await textChannel.SendMessageAsync(
+                        "Usage for streaming:
+`!bot status streaming <status> <url> <text>`");
+                    return;
+                }
+
+                streamUrl = parts[4];
+                textValue = string.Join(" ", parts.Skip(5));
+            }
+            else
+            {
+                textValue = string.Join(" ", parts.Skip(4));
+            }
+
+            if (string.IsNullOrWhiteSpace(textValue))
+            {
+                await textChannel.SendMessageAsync("Status text cannot be empty.");
+                return;
+            }
+
+            _presenceSettings.Type = type;
+            _presenceSettings.Status = status;
+            _presenceSettings.Text = textValue;
+            _presenceSettings.StreamUrl = streamUrl;
+
+            SavePresenceSettings();
+            await ApplyPresenceAsync();
+
+            await textChannel.SendMessageAsync($"✅ Status updated to **{type} {textValue}**");
             return;
         }
 
@@ -455,6 +531,7 @@ class Program
             .WithTitle("Bot Owner Commands")
             .WithDescription("Owner-only controls.")
             .AddField("!bot help", "Show this help.", false)
+            .AddField("!bot status <type> <status> <text>", "Change the bot presence without editing code.", false)
             .AddField("!bot servercount", "Show how many servers the bot is in.", false)
             .AddField("!bot servers", "List connected servers.", false)
             .AddField("!bot stats", "Show bot stats and uptime.", false)
@@ -2108,6 +2185,74 @@ class Program
         });
     }
 
+    private void LoadPresenceSettings()
+    {
+        try
+        {
+            if (!File.Exists(PresenceFilePath))
+            {
+                SavePresenceSettings();
+                return;
+            }
+
+            string json = File.ReadAllText(PresenceFilePath);
+            BotPresenceSettings? loaded = JsonSerializer.Deserialize<BotPresenceSettings>(json);
+
+            if (loaded != null)
+                _presenceSettings = loaded;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load presence settings: {ex}");
+        }
+    }
+
+    private void SavePresenceSettings()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_presenceSettings, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(PresenceFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save presence settings: {ex}");
+        }
+    }
+
+    private async Task ApplyPresenceAsync()
+    {
+        if (_client == null)
+            return;
+
+        UserStatus status = _presenceSettings.Status switch
+        {
+            "idle" => UserStatus.Idle,
+            "dnd" => UserStatus.DoNotDisturb,
+            "invisible" => UserStatus.Invisible,
+            _ => UserStatus.Online
+        };
+
+        await _client.SetStatusAsync(status);
+
+        ActivityType type = _presenceSettings.Type switch
+        {
+            "playing" => ActivityType.Playing,
+            "listening" => ActivityType.Listening,
+            "streaming" => ActivityType.Streaming,
+            _ => ActivityType.Watching
+        };
+
+        if (type == ActivityType.Streaming)
+            await _client.SetGameAsync(_presenceSettings.Text, _presenceSettings.StreamUrl, ActivityType.Streaming);
+        else
+            await _client.SetGameAsync(_presenceSettings.Text, null, type);
+    }
+
     private void SaveGuildSettings()
     {
         try
@@ -2224,6 +2369,14 @@ class Program
         foreach ((ulong MessageId, ulong UserId) key in staleKeys)
             _cooldowns.Remove(key);
     }
+}
+
+class BotPresenceSettings
+{
+    public string Text { get; set; } = "Running 24/7";
+    public string Type { get; set; } = "watching";
+    public string? StreamUrl { get; set; }
+    public string Status { get; set; } = "online";
 }
 
 class RelayMessageState
