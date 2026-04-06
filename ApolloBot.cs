@@ -31,51 +31,14 @@ class Program
     // Set to 0 to register globally instead.
     private static readonly ulong TestGuildId = 1486178596765565009;
 
-    private readonly Dictionary<string, List<string>> _providers = new()
-    {
-        {
-            "twitter",
-            new List<string>
-            {
-                "vxtwitter.com",
-                "fxtwitter.com",
-                "fixvx.com",
-                "fixupx.com"
-            }
-        },
-        {
-            "reddit",
-            new List<string>
-            {
-                "vxreddit.com",
-                "rxddit.com"
-            }
-        },
-        {
-            "tiktok",
-            new List<string>
-            {
-                "tnktok.com",
-                "tiktxk.com",
-                "fixtiktok.com"
-            }
-        },
-        {
-            "instagram",
-            new List<string>
-            {
-                "eeinstagram.com",
-                "kkinstagram.com"
-            }
-        }
-    };
+    private Dictionary<string, List<string>> _providers = CreateDefaultProviders();
+    private readonly HashSet<ulong> _specialTwitterUsers = new();
+    private readonly SortedDictionary<int, string> _plannedUpdates = new();
 
     private readonly Dictionary<ulong, RelayMessageState> _relayStates = new();
     private readonly Dictionary<(ulong MessageId, ulong UserId), DateTime> _cooldowns = new();
     private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
     private readonly Dictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
-    private readonly HashSet<ulong> _specialTwitterUsers = new();
-    private readonly SortedDictionary<int, string> _plannedUpdates = new();
 
     private const string WebhookName = "Apollo Bot Relay";
 
@@ -94,14 +57,17 @@ class Program
     private static readonly string UserIgnoreSettingsFilePath =
         Path.Combine(DataDirectory, "user_ignore_settings.json");
 
+    private static readonly string PresenceFilePath =
+        Path.Combine(DataDirectory, "bot_presence.json");
+
+    private static readonly string ProvidersFilePath =
+        Path.Combine(DataDirectory, "providers.json");
+
     private static readonly string SpecialTwitterUsersFilePath =
         Path.Combine(DataDirectory, "special_twitter_users.json");
 
     private static readonly string PlannedUpdatesFilePath =
         Path.Combine(DataDirectory, "planned_updates.json");
-
-    private static readonly string PresenceFilePath =
-        Path.Combine(DataDirectory, "bot_presence.json");
 
     private BotPresenceSettings _presenceSettings = new();
 
@@ -122,10 +88,11 @@ class Program
         LoadRelayStates();
         LoadGuildSettings();
         LoadUserIgnoreSettings();
-        LoadSpecialTwitterUsers();
-        LoadPlannedUpdates();
         LoadBotStatsState();
         LoadPresenceSettings();
+        LoadProviders();
+        LoadSpecialTwitterUsers();
+        LoadPlannedUpdates();
         RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -138,10 +105,10 @@ class Program
 
         _client.Log += Log;
         _client.Ready += OnReady;
+        _client.JoinedGuild += OnJoinedGuild;
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
-        _client.JoinedGuild += JoinedGuild;
 
         string? token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
 
@@ -181,8 +148,6 @@ class Program
         Console.WriteLine($"Loaded {_relayStates.Count} persisted relay state(s).");
         Console.WriteLine($"Loaded {_guildSettings.Count} guild setting profile(s).");
         Console.WriteLine($"Loaded {_userIgnoreSettings.Count} user ignore profile(s).");
-        Console.WriteLine($"Loaded {_specialTwitterUsers.Count} special Twitter user override(s).");
-        Console.WriteLine($"Loaded {_plannedUpdates.Count} planned update entry/entries.");
 
         if (_client != null)
             await ApplyPresenceAsync();
@@ -194,15 +159,17 @@ class Program
         }
     }
 
-    private async Task JoinedGuild(SocketGuild guild)
+
+    private async Task OnJoinedGuild(SocketGuild guild)
     {
         try
         {
             if (_client?.CurrentUser == null)
                 return;
 
-            SocketTextChannel? targetChannel = guild.TextChannels
-                .Where(c =>
+            SocketTextChannel? channel = guild.TextChannels
+                .OrderBy(c => c.Position)
+                .FirstOrDefault(c =>
                 {
                     SocketGuildUser? botUser = guild.GetUser(_client.CurrentUser.Id);
                     if (botUser == null)
@@ -210,11 +177,9 @@ class Program
 
                     ChannelPermissions perms = botUser.GetPermissions(c);
                     return perms.ViewChannel && perms.SendMessages && perms.EmbedLinks;
-                })
-                .OrderBy(c => c.Position)
-                .FirstOrDefault();
+                });
 
-            if (targetChannel == null)
+            if (channel == null)
                 return;
 
             var embed = new EmbedBuilder()
@@ -230,11 +195,11 @@ class Program
                 .WithColor(Color.Red)
                 .Build();
 
-            await targetChannel.SendMessageAsync(embed: embed);
+            await channel.SendMessageAsync(embed: embed);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to send joined guild intro message in '{guild.Name}': {ex.Message}");
+            Console.WriteLine($"Failed to send joined guild intro message: {ex}");
         }
     }
 
@@ -313,24 +278,25 @@ class Program
 
         string content = userMessage.Content.Trim();
 
-        if (content.StartsWith("!bot", StringComparison.OrdinalIgnoreCase))
-        {
-            if (!IsBotOwner(userMessage.Author))
-                return;
-
-            await HandleBotCommand(userMessage, textChannel);
-            return;
-        }
-
         if (content.Equals("!vote", StringComparison.OrdinalIgnoreCase))
         {
             await SendVoteMessage(textChannel, userMessage.Author);
             return;
         }
 
-        if (content.Equals("!updates", StringComparison.OrdinalIgnoreCase))
+        if (content.Equals("!updates", StringComparison.OrdinalIgnoreCase) ||
+            content.Equals("!ab updates", StringComparison.OrdinalIgnoreCase))
         {
             await SendPlannedUpdates(textChannel);
+            return;
+        }
+
+        if (content.StartsWith("!bot", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!IsBotOwner(userMessage.Author))
+                return;
+
+            await HandleBotCommand(userMessage, textChannel);
             return;
         }
 
@@ -362,7 +328,7 @@ class Program
             return;
 
         Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms);
-        string newContent = ApplyAllReplacements(originalContent, providerIndexes, _specialTwitterUsers.Contains(message.Author.Id));
+        string newContent = ApplyAllReplacements(originalContent, providerIndexes, message.Author.Id);
 
         if (newContent == originalContent)
             return;
@@ -407,8 +373,7 @@ class Program
                 WebhookToken = webhook.Token,
                 OriginalAuthorId = message.Author.Id,
                 Platforms = detectedPlatforms,
-                ProviderIndexes = providerIndexes,
-                UseSpecialTwitterProviders = _specialTwitterUsers.Contains(message.Author.Id)
+                ProviderIndexes = providerIndexes
             };
 
             SaveRelayStates();
@@ -433,48 +398,6 @@ class Program
         return webhook;
     }
 
-    private async Task SendVoteMessage(SocketTextChannel channel, SocketUser user)
-    {
-        ulong botId = _client?.CurrentUser?.Id ?? 0;
-        string voteUrl = botId == 0
-            ? "https://top.gg/"
-            : $"https://top.gg/bot/{botId}/vote";
-
-        var embed = new EmbedBuilder()
-            .WithTitle("Support ApolloBot")
-            .WithDescription($"{user.Mention} you can vote for ApolloBot here:\n{voteUrl}")
-            .WithColor(Color.Red)
-            .Build();
-
-        await channel.SendMessageAsync(embed: embed);
-    }
-
-    private async Task SendPlannedUpdates(SocketTextChannel channel)
-    {
-        if (_plannedUpdates.Count == 0)
-        {
-            var emptyEmbed = new EmbedBuilder()
-                .WithTitle("ApolloBot Planned Updates")
-                .WithDescription("Nothing is listed right now, but more is always brewing behind the scenes.")
-                .WithColor(Color.Blue)
-                .Build();
-
-            await channel.SendMessageAsync(embed: emptyEmbed);
-            return;
-        }
-
-        string description = string.Join("\n", _plannedUpdates.Select(x => $"`{x.Key}.` {x.Value}"));
-
-        var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Planned Updates")
-            .WithDescription(description)
-            .WithFooter("Subject to change.")
-            .WithColor(Color.Blue)
-            .Build();
-
-        await channel.SendMessageAsync(embed: embed);
-    }
-
     private async Task HandleBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
     {
         string[] parts = message.Content
@@ -494,9 +417,15 @@ class Program
             return;
         }
 
+        if (sub == "provider")
+        {
+            await HandleProviderCommand(textChannel, parts);
+            return;
+        }
+
         if (sub == "special")
         {
-            await HandleSpecialUserCommand(textChannel, parts);
+            await HandleSpecialTwitterUserCommand(textChannel, parts);
             return;
         }
 
@@ -652,179 +581,13 @@ class Program
             .AddField("!bot servercount", "Show how many servers the bot is in.", false)
             .AddField("!bot servers", "List connected servers.", false)
             .AddField("!bot stats", "Show bot stats and uptime.", false)
-            .AddField("!bot special add <userId>", "Add a user to the special Twitter provider list.", false)
-            .AddField("!bot special remove <userId>", "Remove a user from the special Twitter provider list.", false)
-            .AddField("!bot special list", "List users with special Twitter providers.", false)
-            .AddField("!bot special clear", "Clear the special Twitter provider list.", false)
-            .AddField("!bot update add <id> <text>", "Add a planned update entry.", false)
-            .AddField("!bot update edit <id> <text>", "Edit a planned update entry.", false)
-            .AddField("!bot update remove <id>", "Remove a planned update entry.", false)
-            .AddField("!bot update clear", "Clear all planned update entries.", false)
-            .AddField("!bot update list", "Show all planned update entries.", false)
+            .AddField("!bot provider ...", "Manage platform providers dynamically.", false)
+            .AddField("!bot special ...", "Manage approved silly Twitter/X users.", false)
+            .AddField("!bot update ...", "Manage the public planned updates list.", false)
             .WithColor(Color.DarkPurple)
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
-    }
-
-    private async Task HandleSpecialUserCommand(SocketTextChannel channel, string[] parts)
-    {
-        int actionIndex = parts.Length > 0 && parts[0].Equals("!bot", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
-        int userIdIndex = actionIndex + 1;
-
-        if (parts.Length <= actionIndex)
-        {
-            await channel.SendMessageAsync(
-                "Usage:\n" +
-                "`!bot special add <userId>`\n" +
-                "`!bot special remove <userId>`\n" +
-                "`!bot special list`\n" +
-                "`!bot special clear`");
-            return;
-        }
-
-        string action = parts[actionIndex].ToLowerInvariant();
-
-        if (action == "list")
-        {
-            if (_specialTwitterUsers.Count == 0)
-            {
-                await channel.SendMessageAsync("No users are on the special Twitter provider list.");
-                return;
-            }
-
-            string list = string.Join("\n", _specialTwitterUsers.OrderBy(x => x).Select(x => $"• `{x}`"));
-            await channel.SendMessageAsync($"**Special Twitter provider users:**\n{list}");
-            return;
-        }
-
-        if (action == "clear")
-        {
-            _specialTwitterUsers.Clear();
-            SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync("Cleared the special Twitter provider user list.");
-            return;
-        }
-
-        if (parts.Length <= userIdIndex || !ulong.TryParse(parts[userIdIndex], out ulong userId))
-        {
-            await channel.SendMessageAsync("Please provide a valid user ID.");
-            return;
-        }
-
-        if (action == "add")
-        {
-            bool added = _specialTwitterUsers.Add(userId);
-            SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync(
-                added
-                    ? $"Added `{userId}` to the special Twitter provider list."
-                    : $"`{userId}` is already on the special Twitter provider list.");
-            return;
-        }
-
-        if (action == "remove")
-        {
-            bool removed = _specialTwitterUsers.Remove(userId);
-            SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync(
-                removed
-                    ? $"Removed `{userId}` from the special Twitter provider list."
-                    : $"`{userId}` was not on the special Twitter provider list.");
-            return;
-        }
-
-        await channel.SendMessageAsync("Unknown special action. Use `add`, `remove`, `list`, or `clear`.");
-    }
-
-    private async Task HandlePlannedUpdateOwnerCommand(SocketTextChannel channel, string[] parts)
-    {
-        int actionIndex = parts.Length > 0 && parts[0].Equals("!bot", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
-        int idIndex = actionIndex + 1;
-        int textStartIndex = actionIndex + 2;
-
-        if (parts.Length <= actionIndex)
-        {
-            await channel.SendMessageAsync(
-                "Usage:\n" +
-                "`!bot update add <id> <text>`\n" +
-                "`!bot update edit <id> <text>`\n" +
-                "`!bot update remove <id>`\n" +
-                "`!bot update clear`\n" +
-                "`!bot update list`");
-            return;
-        }
-
-        string action = parts[actionIndex].ToLowerInvariant();
-
-        if (action == "list")
-        {
-            await SendPlannedUpdates(channel);
-            return;
-        }
-
-        if (action == "clear")
-        {
-            _plannedUpdates.Clear();
-            SavePlannedUpdates();
-            await channel.SendMessageAsync("Cleared all planned update entries.");
-            return;
-        }
-
-        if (parts.Length <= idIndex || !int.TryParse(parts[idIndex], out int id) || id <= 0)
-        {
-            await channel.SendMessageAsync("Please provide a valid positive update ID.");
-            return;
-        }
-
-        if (action == "remove")
-        {
-            bool removed = _plannedUpdates.Remove(id);
-            SavePlannedUpdates();
-            await channel.SendMessageAsync(
-                removed
-                    ? $"Removed planned update `{id}`."
-                    : $"No planned update entry exists for `{id}`.");
-            return;
-        }
-
-        if (parts.Length <= textStartIndex)
-        {
-            await channel.SendMessageAsync("Please include update text.");
-            return;
-        }
-
-        string updateText = string.Join(" ", parts.Skip(textStartIndex)).Trim();
-
-        if (string.IsNullOrWhiteSpace(updateText))
-        {
-            await channel.SendMessageAsync("Update text cannot be empty.");
-            return;
-        }
-
-        if (action == "add")
-        {
-            if (_plannedUpdates.ContainsKey(id))
-            {
-                await channel.SendMessageAsync($"Update ID `{id}` already exists. Use `!bot update edit {id} ...` instead.");
-                return;
-            }
-
-            _plannedUpdates[id] = updateText;
-            SavePlannedUpdates();
-            await channel.SendMessageAsync($"Added planned update `{id}`.");
-            return;
-        }
-
-        if (action == "edit")
-        {
-            _plannedUpdates[id] = updateText;
-            SavePlannedUpdates();
-            await channel.SendMessageAsync($"Updated planned update `{id}`.");
-            return;
-        }
-
-        await channel.SendMessageAsync("Unknown update action. Use `add`, `edit`, `remove`, `clear`, or `list`.");
     }
 
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
@@ -868,21 +631,15 @@ class Program
             return;
         }
 
-        if (sub == "about")
-        {
-            await SendAbout(textChannel);
-            return;
-        }
-
-        if (sub == "vote")
-        {
-            await SendVoteMessage(textChannel, message.Author);
-            return;
-        }
-
         if (sub == "updates")
         {
             await SendPlannedUpdates(textChannel);
+            return;
+        }
+
+        if (sub == "about")
+        {
+            await SendAbout(textChannel);
             return;
         }
 
@@ -919,7 +676,7 @@ class Program
 
         if (sub == "update" && IsBotOwner(message.Author))
         {
-            await HandlePlannedUpdateOwnerCommand(textChannel, parts);
+            await HandlePlannedUpdateOwnerCommand(textChannel, new[] { "bot", "update" }.Concat(parts.Skip(1)).ToArray());
             return;
         }
 
@@ -1115,7 +872,10 @@ class Program
                 "• User ignore system\n" +
                 "• Reply ping for original poster\n" +
                 "• Server enable/disable and whitelist settings\n" +
-                "• Slash roll command", false)
+                "• Slash roll command\n" +
+                "• Public vote command\n" +
+                "• Public planned updates list\n" +
+                "• Dynamic provider management for bot owners", false)
             .WithColor(Color.Gold)
             .Build();
 
@@ -1135,6 +895,292 @@ class Program
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
+    }
+
+
+    private async Task SendVoteMessage(SocketTextChannel channel, SocketUser user)
+    {
+        var embed = new EmbedBuilder()
+            .WithTitle("Support ApolloBot")
+            .WithDescription($"{user.Mention} you can vote for ApolloBot here:\nhttps://top.gg/bot/1486174544531034212/vote")
+            .WithColor(Color.Gold)
+            .Build();
+
+        await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SendPlannedUpdates(SocketTextChannel channel)
+    {
+        if (_plannedUpdates.Count == 0)
+        {
+            await channel.SendMessageAsync("There are no planned updates listed right now.");
+            return;
+        }
+
+        string lines = string.Join("\n", _plannedUpdates.Select(kvp => $"`{kvp.Key}.` {kvp.Value}"));
+
+        var embed = new EmbedBuilder()
+            .WithTitle("ApolloBot Planned Updates")
+            .WithDescription(lines)
+            .WithColor(Color.Blue)
+            .WithFooter("Subject to change.")
+            .Build();
+
+        await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task HandlePlannedUpdateOwnerCommand(SocketTextChannel channel, string[] parts)
+    {
+        if (parts.Length < 3)
+        {
+            await channel.SendMessageAsync(
+                "Usage:\n" +
+                "`!bot update add <id> <text>`\n" +
+                "`!bot update edit <id> <text>`\n" +
+                "`!bot update remove <id>`\n" +
+                "`!bot update list`\n" +
+                "`!bot update clear`");
+            return;
+        }
+
+        string action = parts[2].ToLowerInvariant();
+
+        if (action == "list")
+        {
+            await SendPlannedUpdates(channel);
+            return;
+        }
+
+        if (action == "clear")
+        {
+            _plannedUpdates.Clear();
+            SavePlannedUpdates();
+            await channel.SendMessageAsync("Cleared all planned updates.");
+            return;
+        }
+
+        if (action == "remove")
+        {
+            if (parts.Length < 4 || !int.TryParse(parts[3], out int removeId) || removeId <= 0)
+            {
+                await channel.SendMessageAsync("Please provide a valid positive update ID.");
+                return;
+            }
+
+            bool removed = _plannedUpdates.Remove(removeId);
+            SavePlannedUpdates();
+            await channel.SendMessageAsync(removed
+                ? $"Removed update `{removeId}`."
+                : $"Update `{removeId}` was not found.");
+            return;
+        }
+
+        if (action is not ("add" or "edit"))
+        {
+            await channel.SendMessageAsync("Unknown update action. Use add, edit, remove, list, or clear.");
+            return;
+        }
+
+        if (parts.Length < 5 || !int.TryParse(parts[3], out int id) || id <= 0)
+        {
+            await channel.SendMessageAsync("Please provide a valid positive update ID.");
+            return;
+        }
+
+        string textValue = string.Join(" ", parts.Skip(4)).Trim();
+
+        if (string.IsNullOrWhiteSpace(textValue))
+        {
+            await channel.SendMessageAsync("Please provide update text.");
+            return;
+        }
+
+        _plannedUpdates[id] = textValue;
+        SavePlannedUpdates();
+
+        await channel.SendMessageAsync(action == "add"
+            ? $"Added update `{id}`."
+            : $"Updated update `{id}`.");
+    }
+
+    private async Task HandleSpecialTwitterUserCommand(SocketTextChannel channel, string[] parts)
+    {
+        if (parts.Length < 3)
+        {
+            await channel.SendMessageAsync(
+                "Usage:\n" +
+                "`!bot special add <userId>`\n" +
+                "`!bot special remove <userId>`\n" +
+                "`!bot special list`\n" +
+                "`!bot special clear`");
+            return;
+        }
+
+        string action = parts[2].ToLowerInvariant();
+
+        if (action == "list")
+        {
+            if (_specialTwitterUsers.Count == 0)
+            {
+                await channel.SendMessageAsync("No users are approved for the silly Twitter/X providers.");
+                return;
+            }
+
+            string users = string.Join("\n", _specialTwitterUsers.Select(x => $"• `{x}`"));
+            await channel.SendMessageAsync($"**Approved silly Twitter/X users:**\n{users}");
+            return;
+        }
+
+        if (action == "clear")
+        {
+            _specialTwitterUsers.Clear();
+            SaveSpecialTwitterUsers();
+            await channel.SendMessageAsync("Cleared the silly Twitter/X user list.");
+            return;
+        }
+
+        if (parts.Length < 4 || !ulong.TryParse(parts[3], out ulong userId))
+        {
+            await channel.SendMessageAsync("Please provide a valid user ID.");
+            return;
+        }
+
+        if (action == "add")
+        {
+            bool added = _specialTwitterUsers.Add(userId);
+            SaveSpecialTwitterUsers();
+            await channel.SendMessageAsync(added
+                ? $"Added `{userId}` to the silly Twitter/X list."
+                : $"`{userId}` is already on the silly Twitter/X list.");
+            return;
+        }
+
+        if (action == "remove")
+        {
+            bool removed = _specialTwitterUsers.Remove(userId);
+            SaveSpecialTwitterUsers();
+            await channel.SendMessageAsync(removed
+                ? $"Removed `{userId}` from the silly Twitter/X list."
+                : $"`{userId}` was not on the silly Twitter/X list.");
+            return;
+        }
+
+        await channel.SendMessageAsync("Unknown special action. Use add, remove, list, or clear.");
+    }
+
+    private async Task HandleProviderCommand(SocketTextChannel channel, string[] parts)
+    {
+        if (parts.Length < 3)
+        {
+            await channel.SendMessageAsync(
+                "Usage:\n" +
+                "`!bot provider list`\n" +
+                "`!bot provider list <platform>`\n" +
+                "`!bot provider add <platform> <domain>`\n" +
+                "`!bot provider remove <platform> <domain>`\n" +
+                "`!bot provider clear <platform>`");
+            return;
+        }
+
+        string action = parts[2].ToLowerInvariant();
+
+        if (action == "list")
+        {
+            if (parts.Length == 3)
+            {
+                await SendProviders(channel);
+                return;
+            }
+
+            string platform = parts[3].ToLowerInvariant();
+
+            if (!_providers.TryGetValue(platform, out List<string>? listedProviders))
+            {
+                await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, or instagram.");
+                return;
+            }
+
+            await channel.SendMessageAsync(
+                $"**{FormatPlatformName(platform)} providers:** {string.Join(", ", listedProviders)}");
+            return;
+        }
+
+        if (parts.Length < 4)
+        {
+            await channel.SendMessageAsync("Please provide a platform.");
+            return;
+        }
+
+        string targetPlatform = parts[3].ToLowerInvariant();
+
+        if (!_providers.ContainsKey(targetPlatform))
+        {
+            await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, or instagram.");
+            return;
+        }
+
+        if (action == "clear")
+        {
+            _providers[targetPlatform].Clear();
+            SaveProviders();
+            await channel.SendMessageAsync($"Cleared all providers for {FormatPlatformName(targetPlatform)}.");
+            return;
+        }
+
+        if (parts.Length < 5)
+        {
+            await channel.SendMessageAsync("Please provide a provider domain.");
+            return;
+        }
+
+        string domain = parts[4].Trim().ToLowerInvariant();
+
+        if (domain.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            domain = domain["http://".Length..];
+
+        if (domain.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            domain = domain["https://".Length..];
+
+        domain = domain.Trim('/');
+
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            await channel.SendMessageAsync("Please provide a valid provider domain.");
+            return;
+        }
+
+        if (action == "add")
+        {
+            if (_providers[targetPlatform].Any(x => string.Equals(x, domain, StringComparison.OrdinalIgnoreCase)))
+            {
+                await channel.SendMessageAsync($"{domain} is already configured for {FormatPlatformName(targetPlatform)}.");
+                return;
+            }
+
+            _providers[targetPlatform].Add(domain);
+            SaveProviders();
+            await channel.SendMessageAsync($"Added `{domain}` to {FormatPlatformName(targetPlatform)} providers.");
+            return;
+        }
+
+        if (action == "remove")
+        {
+            string? existing = _providers[targetPlatform]
+                .FirstOrDefault(x => string.Equals(x, domain, StringComparison.OrdinalIgnoreCase));
+
+            if (existing == null)
+            {
+                await channel.SendMessageAsync($"{domain} was not found for {FormatPlatformName(targetPlatform)}.");
+                return;
+            }
+
+            _providers[targetPlatform].Remove(existing);
+            SaveProviders();
+            await channel.SendMessageAsync($"Removed `{existing}` from {FormatPlatformName(targetPlatform)} providers.");
+            return;
+        }
+
+        await channel.SendMessageAsync("Unknown provider action. Use add, remove, list, or clear.");
     }
 
     private async Task HandleWhitelistCommand(SocketUserMessage message, SocketTextChannel textChannel, GuildSettings settings, string[] parts)
@@ -1557,9 +1603,7 @@ class Program
                 return;
             }
 
-            List<string> providers = GetProvidersForPlatform(platform, state.UseSpecialTwitterProviders);
-
-            if (providers.Count == 0)
+            if (!_providers.TryGetValue(platform, out List<string>? providers) || providers.Count == 0)
             {
                 await component.FollowupAsync(
                     "No providers are configured for that platform.",
@@ -1579,7 +1623,7 @@ class Program
 
             state.ProviderIndexes[platform] = nextIndex;
 
-            string newContent = ApplyAllReplacements(state.OriginalContent, state.ProviderIndexes, state.UseSpecialTwitterProviders);
+            string newContent = ApplyAllReplacements(state.OriginalContent, state.ProviderIndexes, state.OriginalAuthorId);
 
             var editClient = new DiscordWebhookClient(state.WebhookId, state.WebhookToken);
 
@@ -1872,21 +1916,21 @@ class Program
         return indexes;
     }
 
-    private string ApplyAllReplacements(string text, Dictionary<string, int> providerIndexes, bool useSpecialTwitterProviders = false)
+    private string ApplyAllReplacements(string text, Dictionary<string, int> providerIndexes, ulong originalAuthorId)
     {
         string result = text;
 
         if (providerIndexes.ContainsKey("twitter"))
-            result = ReplaceTwitterLinks(result, providerIndexes["twitter"], useSpecialTwitterProviders);
+            result = ReplaceTwitterLinks(result, providerIndexes["twitter"], originalAuthorId);
 
         if (providerIndexes.ContainsKey("reddit"))
-            result = ReplaceRedditLinks(result, providerIndexes["reddit"]);
+            result = ReplaceRedditLinks(result, providerIndexes["reddit"], originalAuthorId);
 
         if (providerIndexes.ContainsKey("tiktok"))
-            result = ReplaceTikTokLinks(result, providerIndexes["tiktok"]);
+            result = ReplaceTikTokLinks(result, providerIndexes["tiktok"], originalAuthorId);
 
         if (providerIndexes.ContainsKey("instagram"))
-            result = ReplaceInstagramLinks(result, providerIndexes["instagram"]);
+            result = ReplaceInstagramLinks(result, providerIndexes["instagram"], originalAuthorId);
 
         return result;
     }
@@ -1923,27 +1967,12 @@ class Program
             RegexOptions.IgnoreCase);
     }
 
-    private List<string> GetProvidersForPlatform(string platform, bool useSpecialTwitterProviders = false)
+    private string ReplaceTwitterLinks(string text, int providerIndex, ulong originalAuthorId)
     {
-        if (platform == "twitter" && useSpecialTwitterProviders)
-        {
-            return new List<string>
-            {
-                "stupidcockx.com",
-                "girlcockx.com",
-                "vxtwitter.com",
-                "fxtwitter.com"
-            };
-        }
+        List<string> twitterProviders = GetProvidersForPlatform("twitter", originalAuthorId);
 
-        return _providers.TryGetValue(platform, out List<string>? providers)
-            ? providers
-            : new List<string>();
-    }
-
-    private string ReplaceTwitterLinks(string text, int providerIndex, bool useSpecialTwitterProviders = false)
-    {
-        List<string> twitterProviders = GetProvidersForPlatform("twitter", useSpecialTwitterProviders);
+        if (twitterProviders.Count == 0)
+            return text;
 
         if (providerIndex < 0 || providerIndex >= twitterProviders.Count)
             providerIndex = 0;
@@ -1965,9 +1994,12 @@ class Program
         return text;
     }
 
-    private string ReplaceRedditLinks(string text, int providerIndex)
+    private string ReplaceRedditLinks(string text, int providerIndex, ulong originalAuthorId)
     {
-        List<string> redditProviders = _providers["reddit"];
+        List<string> redditProviders = GetProvidersForPlatform("reddit", originalAuthorId);
+
+        if (redditProviders.Count == 0)
+            return text;
 
         if (providerIndex < 0 || providerIndex >= redditProviders.Count)
             providerIndex = 0;
@@ -1983,9 +2015,12 @@ class Program
         return text;
     }
 
-    private string ReplaceTikTokLinks(string text, int providerIndex)
+    private string ReplaceTikTokLinks(string text, int providerIndex, ulong originalAuthorId)
     {
-        List<string> tikTokProviders = _providers["tiktok"];
+        List<string> tikTokProviders = GetProvidersForPlatform("tiktok", originalAuthorId);
+
+        if (tikTokProviders.Count == 0)
+            return text;
 
         if (providerIndex < 0 || providerIndex >= tikTokProviders.Count)
             providerIndex = 0;
@@ -2007,9 +2042,12 @@ class Program
         return text;
     }
 
-    private string ReplaceInstagramLinks(string text, int providerIndex)
+    private string ReplaceInstagramLinks(string text, int providerIndex, ulong originalAuthorId)
     {
-        List<string> instagramProviders = _providers["instagram"];
+        List<string> instagramProviders = GetProvidersForPlatform("instagram", originalAuthorId);
+
+        if (instagramProviders.Count == 0)
+            return text;
 
         if (providerIndex < 0 || providerIndex >= instagramProviders.Count)
             providerIndex = 0;
@@ -2025,102 +2063,32 @@ class Program
         return text;
     }
 
-    private void SaveSpecialTwitterUsers()
+    private List<string> GetProvidersForPlatform(string platform, ulong originalAuthorId)
     {
-        try
+        if (platform == "twitter" && _specialTwitterUsers.Contains(originalAuthorId))
         {
-            string json = JsonSerializer.Serialize(_specialTwitterUsers.OrderBy(x => x).ToList(), new JsonSerializerOptions
+            var special = new List<string>
             {
-                WriteIndented = true
-            });
+                "stupidpenisx.com",
+                "girlcockx.com"
+            };
 
-            File.WriteAllText(SpecialTwitterUsersFilePath, json);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to save special Twitter users: {ex}");
-        }
-    }
-
-    private void LoadSpecialTwitterUsers()
-    {
-        try
-        {
-            if (!File.Exists(SpecialTwitterUsersFilePath))
+            if (_providers.TryGetValue("twitter", out List<string>? normalTwitterProviders))
             {
-                Console.WriteLine("No special Twitter users file found. Starting fresh.");
-                return;
+                foreach (string provider in normalTwitterProviders)
+                {
+                    if (!special.Any(x => string.Equals(x, provider, StringComparison.OrdinalIgnoreCase)))
+                        special.Add(provider);
+                }
             }
 
-            string json = File.ReadAllText(SpecialTwitterUsersFilePath);
-            List<ulong>? loaded = JsonSerializer.Deserialize<List<ulong>>(json);
-
-            if (loaded == null)
-            {
-                Console.WriteLine("Special Twitter users file was empty or invalid. Starting fresh.");
-                return;
-            }
-
-            _specialTwitterUsers.Clear();
-
-            foreach (ulong userId in loaded)
-                _specialTwitterUsers.Add(userId);
-
-            Console.WriteLine($"Loaded {_specialTwitterUsers.Count} special Twitter user override(s) from disk.");
+            return special;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to load special Twitter users: {ex}");
-        }
-    }
 
-    private void SavePlannedUpdates()
-    {
-        try
-        {
-            string json = JsonSerializer.Serialize(_plannedUpdates, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
+        if (_providers.TryGetValue(platform, out List<string>? providers))
+            return providers;
 
-            File.WriteAllText(PlannedUpdatesFilePath, json);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to save planned updates: {ex}");
-        }
-    }
-
-    private void LoadPlannedUpdates()
-    {
-        try
-        {
-            if (!File.Exists(PlannedUpdatesFilePath))
-            {
-                Console.WriteLine("No planned updates file found. Starting fresh.");
-                return;
-            }
-
-            string json = File.ReadAllText(PlannedUpdatesFilePath);
-            SortedDictionary<int, string>? loaded = JsonSerializer.Deserialize<SortedDictionary<int, string>>(json);
-
-            if (loaded == null)
-            {
-                Console.WriteLine("Planned updates file was empty or invalid. Starting fresh.");
-                return;
-            }
-
-            _plannedUpdates.Clear();
-
-            foreach ((int id, string updateText) in loaded)
-                _plannedUpdates[id] = updateText;
-
-            Console.WriteLine($"Loaded {_plannedUpdates.Count} planned update entry/entries from disk.");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to load planned updates: {ex}");
-        }
+        return new List<string>();
     }
 
     private void SaveRelayStates()
@@ -2675,6 +2643,179 @@ class Program
             await _client.SetGameAsync(_presenceSettings.Text, null, type);
     }
 
+
+    private static Dictionary<string, List<string>> CreateDefaultProviders()
+    {
+        return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            {
+                "twitter",
+                new List<string>
+                {
+                    "vxtwitter.com",
+                    "fxtwitter.com",
+                    "fixvx.com",
+                    "fixupx.com"
+                }
+            },
+            {
+                "reddit",
+                new List<string>
+                {
+                    "vxreddit.com",
+                    "rxddit.com"
+                }
+            },
+            {
+                "tiktok",
+                new List<string>
+                {
+                    "tnktok.com",
+                    "tiktxk.com",
+                    "fixtiktok.com"
+                }
+            },
+            {
+                "instagram",
+                new List<string>
+                {
+                    "eeinstagram.com",
+                    "kkinstagram.com"
+                }
+            }
+        };
+    }
+
+    private void LoadProviders()
+    {
+        try
+        {
+            if (!File.Exists(ProvidersFilePath))
+            {
+                _providers = CreateDefaultProviders();
+                SaveProviders();
+                return;
+            }
+
+            string json = File.ReadAllText(ProvidersFilePath);
+            Dictionary<string, List<string>>? loaded =
+                JsonSerializer.Deserialize<Dictionary<string, List<string>>>(json);
+
+            _providers = loaded ?? CreateDefaultProviders();
+
+            foreach ((string key, List<string> defaults) in CreateDefaultProviders())
+            {
+                if (!_providers.ContainsKey(key))
+                    _providers[key] = new List<string>(defaults);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load providers: {ex}");
+            _providers = CreateDefaultProviders();
+        }
+    }
+
+    private void SaveProviders()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_providers, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(ProvidersFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save providers: {ex}");
+        }
+    }
+
+    private void LoadSpecialTwitterUsers()
+    {
+        try
+        {
+            if (!File.Exists(SpecialTwitterUsersFilePath))
+                return;
+
+            string json = File.ReadAllText(SpecialTwitterUsersFilePath);
+            HashSet<ulong>? loaded = JsonSerializer.Deserialize<HashSet<ulong>>(json);
+
+            _specialTwitterUsers.Clear();
+
+            if (loaded != null)
+            {
+                foreach (ulong userId in loaded)
+                    _specialTwitterUsers.Add(userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load special Twitter users: {ex}");
+        }
+    }
+
+    private void SaveSpecialTwitterUsers()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_specialTwitterUsers, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(SpecialTwitterUsersFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save special Twitter users: {ex}");
+        }
+    }
+
+    private void LoadPlannedUpdates()
+    {
+        try
+        {
+            if (!File.Exists(PlannedUpdatesFilePath))
+                return;
+
+            string json = File.ReadAllText(PlannedUpdatesFilePath);
+            SortedDictionary<int, string>? loaded =
+                JsonSerializer.Deserialize<SortedDictionary<int, string>>(json);
+
+            _plannedUpdates.Clear();
+
+            if (loaded != null)
+            {
+                foreach ((int id, string value) in loaded)
+                    _plannedUpdates[id] = value;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load planned updates: {ex}");
+        }
+    }
+
+    private void SavePlannedUpdates()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_plannedUpdates, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(PlannedUpdatesFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save planned updates: {ex}");
+        }
+    }
+
     private void SaveGuildSettings()
     {
         try
@@ -2807,7 +2948,6 @@ class RelayMessageState
     public ulong WebhookId { get; set; }
     public string WebhookToken { get; set; } = "";
     public ulong OriginalAuthorId { get; set; }
-    public bool UseSpecialTwitterProviders { get; set; }
     public List<string> Platforms { get; set; } = new();
     public Dictionary<string, int> ProviderIndexes { get; set; } = new();
 }
