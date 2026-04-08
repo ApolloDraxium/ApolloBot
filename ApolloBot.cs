@@ -69,6 +69,25 @@ class Program
     private static readonly string PlannedUpdatesFilePath =
         Path.Combine(DataDirectory, "planned_updates.json");
 
+    private static readonly string GuildActivityStateFilePath =
+        Path.Combine(DataDirectory, "guild_activity_state.json");
+
+    private static readonly string GuildUsageStatsFilePath =
+        Path.Combine(DataDirectory, "guild_usage_stats.json");
+
+    private readonly Dictionary<ulong, GuildActivityState> _guildActivity = new();
+    private readonly Dictionary<ulong, GuildUsageStats> _guildUsageStats = new();
+
+    private readonly ulong _ownerLogChannelId =
+        ulong.TryParse(Environment.GetEnvironmentVariable("OWNER_LOG_CHANNEL_ID"), out ulong parsedOwnerLogChannelId)
+            ? parsedOwnerLogChannelId
+            : 0;
+
+    private readonly string _supportUrl =
+        Environment.GetEnvironmentVariable("APOLLOBOT_SUPPORT_URL")?.Trim() ?? "";
+
+    private const int DefaultPageSize = 10;
+
     private BotPresenceSettings _presenceSettings = new();
 
     private static readonly HashSet<ulong> BotOwnerIds = new()
@@ -93,6 +112,8 @@ class Program
         LoadProviders();
         LoadSpecialTwitterUsers();
         LoadPlannedUpdates();
+        LoadGuildActivityState();
+        LoadGuildUsageStats();
         RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -106,6 +127,7 @@ class Program
         _client.Log += Log;
         _client.Ready += OnReady;
         _client.JoinedGuild += OnJoinedGuild;
+        _client.LeftGuild += OnLeftGuild;
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
@@ -152,6 +174,8 @@ class Program
         if (_client != null)
             await ApplyPresenceAsync();
 
+        await SyncGuildTrackingStateAsync();
+
         if (!_slashCommandsRegistered)
         {
             await RegisterSlashCommandsAsync();
@@ -164,6 +188,22 @@ class Program
     {
         try
         {
+            GuildActivityState activity = GetOrCreateGuildActivityState(guild);
+            activity.ServerName = guild.Name;
+            activity.LastKnownMemberCount = guild.MemberCount;
+            activity.OwnerId = guild.OwnerId;
+            activity.OwnerName = guild.Owner != null
+                ? $"{guild.Owner.Username}#{guild.Owner.Discriminator}"
+                : "Unknown";
+            activity.LastJoinedAtUtc = DateTime.UtcNow;
+            activity.LastUpdatedAtUtc = DateTime.UtcNow;
+            SaveGuildActivityState();
+
+            EnsureGuildUsageStatsEntry(guild);
+            SaveGuildUsageStats();
+
+            await SendGuildLifecycleLogAsync(guild, joined: true, activity);
+
             if (_client?.CurrentUser == null)
                 return;
 
@@ -189,7 +229,8 @@ class Program
                     "Twitter / Reddit / TikTok / Instagram\n\n" +
                     "**Use:**\n" +
                     "`!embedfix on` *(To ensure I am fixing embeds)*\n" +
-                    "`!ab perms` *(To ensure I have the right permissions per channel)*\n\n" +
+                    "`!ab perms` *(To ensure I have the right permissions per channel)*\n" +
+                    "`!support` *(For bug reports, help, and feedback)*\n\n" +
                     "**Optional:**\n" +
                     "`!ab help` *(For additional commands)*")
                 .WithColor(Color.Red)
@@ -199,7 +240,27 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to send joined guild intro message: {ex}");
+            Console.WriteLine($"Failed to handle joined guild flow: {ex}");
+        }
+    }
+
+    private async Task OnLeftGuild(SocketGuild guild)
+    {
+        try
+        {
+            GuildActivityState activity = GetOrCreateGuildActivityState(guild);
+            activity.ServerName = string.IsNullOrWhiteSpace(guild.Name) ? activity.ServerName : guild.Name;
+            activity.LastKnownMemberCount = guild.MemberCount > 0 ? guild.MemberCount : activity.LastKnownMemberCount;
+            activity.OwnerId = guild.OwnerId != 0 ? guild.OwnerId : activity.OwnerId;
+            activity.LastRemovedAtUtc = DateTime.UtcNow;
+            activity.LastUpdatedAtUtc = DateTime.UtcNow;
+
+            SaveGuildActivityState();
+            await SendGuildLifecycleLogAsync(guild, joined: false, activity);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to handle left guild flow: {ex}");
         }
     }
 
@@ -291,6 +352,13 @@ class Program
             return;
         }
 
+        if (content.Equals("!support", StringComparison.OrdinalIgnoreCase) ||
+            content.Equals("!ab support", StringComparison.OrdinalIgnoreCase))
+        {
+            await SendSupportMessage(textChannel);
+            return;
+        }
+
         if (content.StartsWith("!bot", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsBotOwner(userMessage.Author))
@@ -378,6 +446,7 @@ class Program
 
             SaveRelayStates();
             IncrementEmbedsFixedCount();
+            RecordGuildEmbedFix(textChannel.Guild);
 
             await message.DeleteAsync();
         }
@@ -517,8 +586,9 @@ class Program
             }
 
             var guilds = _client.Guilds
-                .OrderBy(g => g.Name)
-                .Select(g => $"• {g.Name} (`{g.Id}`) - {g.MemberCount} members")
+                .OrderByDescending(g => g.MemberCount)
+                .ThenBy(g => g.Name)
+                .Select((g, i) => $"**{i + 1}.** {g.Name}\nID: `{g.Id}` | Members: **{g.MemberCount}**")
                 .ToList();
 
             if (guilds.Count == 0)
@@ -527,18 +597,28 @@ class Program
                 return;
             }
 
-            string output = string.Join("\n", guilds);
+            await SendPaginatedEmbedAsync(
+                textChannel,
+                "ApolloBot Connected Servers",
+                guilds,
+                "botservers",
+                page: 0,
+                pageSize: DefaultPageSize,
+                color: Color.Gold,
+                headerText: $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}");
 
-            if (output.Length > 1900)
-            {
-                await textChannel.SendMessageAsync(
-                    $"I'm in **{guilds.Count}** servers. Too many to display in one message.");
-            }
-            else
-            {
-                await textChannel.SendMessageAsync($"**Connected servers ({guilds.Count}):**\n{output}");
-            }
+            return;
+        }
 
+        if (sub == "topservers")
+        {
+            await SendTopServersByUsageAsync(textChannel);
+            return;
+        }
+
+        if (sub == "serverstats")
+        {
+            await SendSingleServerStatsAsync(textChannel, parts);
             return;
         }
 
@@ -559,6 +639,8 @@ class Program
                 .AddField("Guild Settings", guildSettingsCount, true)
                 .AddField("Ignored User Profiles", ignoredUsersCount, true)
                 .AddField("Platforms Supported", _providers.Count, true)
+                .AddField("Embeds Fixed", _embedsFixedCount, true)
+                .AddField("Tracked Servers", _guildUsageStats.Count, true)
                 .AddField("Uptime", FormatDuration(uptime), true)
                 .WithColor(Color.DarkBlue)
                 .WithCurrentTimestamp()
@@ -579,7 +661,9 @@ class Program
             .AddField("!bot help", "Show this help.", false)
             .AddField("!bot status <type> <status> <text>", "Change the bot presence without editing code.", false)
             .AddField("!bot servercount", "Show how many servers the bot is in.", false)
-            .AddField("!bot servers", "List connected servers.", false)
+            .AddField("!bot servers", "List connected servers with pagination.", false)
+            .AddField("!bot topservers", "Show the most-used servers by embed fixes.", false)
+            .AddField("!bot serverstats <serverId>", "Show detailed stats for one server.", false)
             .AddField("!bot stats", "Show bot stats and uptime.", false)
             .AddField("!bot provider ...", "Manage platform providers dynamically.", false)
             .AddField("!bot special ...", "Manage approved silly Twitter/X users.", false)
@@ -640,6 +724,12 @@ class Program
         if (sub == "about")
         {
             await SendAbout(textChannel);
+            return;
+        }
+
+        if (sub == "support")
+        {
+            await SendSupportMessage(textChannel);
             return;
         }
 
@@ -815,46 +905,17 @@ class Program
     private async Task SendApolloBotHelp(SocketTextChannel channel, SocketUser user)
     {
         bool isAdmin = user is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
+        List<string> lines = BuildApolloBotHelpLines(isAdmin);
 
-        var embed = new EmbedBuilder()
-            .WithTitle("📦 ApolloBot Commands")
-            .WithDescription("Embed fixing + utility commands.")
-            .AddField("🌐 Public Commands",
-                "`!ab help` – Show this menu\n" +
-                "`!ab about` – What the bot does\n" +
-                "`!ab ping` – Check if bot is alive\n" +
-                "`!ab providers` – Show providers\n" +
-                "`!ab perms` – Check permissions\n" +
-                "`!ab status` – Server settings\n" +
-                "`!ab ignore on` – Ignore your embeds in this server\n" +
-                "`!ab ignore off` – Stop ignoring your embeds in this server\n" +
-                "`!ab ignore all` – Toggle ignore in all servers\n" +
-                "`/roll` – Roll dice", false);
-
-        if (isAdmin)
-        {
-            embed.AddField("🛠 Admin Commands",
-                "`!embedfix on` – Enable bot\n" +
-                "`!embedfix off` – Disable bot\n" +
-                "`!ab whitelist add #channel`\n" +
-                "`!ab whitelist remove #channel`\n" +
-                "`!ab whitelist list`\n" +
-                "`!ab whitelist clear`", false);
-        }
-
-        embed
-            .AddField("🎲 Roll Examples",
-                "`/roll`\n" +
-                "`/roll dice:1d20`\n" +
-                "`/roll dice:1d20+6`\n" +
-                "`/roll dice:1d20 mode:advantage`\n" +
-                "`/roll dice:1d20+4 mode:disadvantage`\n" +
-                "`/roll dice:1d6`\n" +
-                "`/roll dice:2d6+3`", false)
-            .WithColor(Color.Teal)
-            .WithFooter("Tip: Use the buttons on relayed messages to fix broken embeds!");
-
-        await channel.SendMessageAsync(embed: embed.Build());
+        await SendPaginatedEmbedAsync(
+            channel,
+            "📦 ApolloBot Commands",
+            lines,
+            "abhelp",
+            page: 0,
+            pageSize: DefaultPageSize,
+            color: Color.Teal,
+            headerText: "Embed fixing, support, and utility commands.");
     }
 
     private async Task SendAbout(SocketTextChannel channel)
@@ -875,6 +936,7 @@ class Program
                 "• Slash roll command\n" +
                 "• Public vote command\n" +
                 "• Public planned updates list\n" +
+                "• Support command for bug reports and feedback\n" +
                 "• Dynamic provider management for bot owners", false)
             .WithColor(Color.Gold)
             .Build();
@@ -907,6 +969,32 @@ class Program
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
+    }
+
+
+    private async Task SendSupportMessage(SocketTextChannel channel)
+    {
+        if (string.IsNullOrWhiteSpace(_supportUrl))
+        {
+            await channel.SendMessageAsync(
+                "Support is not configured yet. Set the `APOLLOBOT_SUPPORT_URL` environment variable to enable `!support`.");
+            return;
+        }
+
+        var embed = new EmbedBuilder()
+            .WithTitle("ApolloBot Support & Feedback")
+            .WithDescription(
+                "Found a bug, have a suggestion, or want to send feedback?\n\n" +
+                $"Use the support page here:\n{_supportUrl}")
+            .WithColor(Color.Gold)
+            .WithFooter("Your feedback helps improve ApolloBot.")
+            .Build();
+
+        var components = new ComponentBuilder()
+            .WithButton("Open Support Page", url: _supportUrl, style: ButtonStyle.Link)
+            .Build();
+
+        await channel.SendMessageAsync(embed: embed, components: components);
     }
 
     private async Task SendPlannedUpdates(SocketTextChannel channel)
@@ -1528,6 +1616,12 @@ class Program
     {
         string customId = component.Data.CustomId;
 
+        if (customId.StartsWith("page:", StringComparison.Ordinal))
+        {
+            await HandlePaginatorButtonAsync(component);
+            return;
+        }
+
         if (customId != "delete_embed" && !customId.StartsWith("cycle_", StringComparison.Ordinal))
             return;
 
@@ -1658,6 +1752,499 @@ class Program
             catch
             {
             }
+        }
+    }
+
+
+    private async Task SendPaginatedEmbedAsync(
+        ISocketMessageChannel channel,
+        string title,
+        List<string> lines,
+        string paginatorType,
+        int page,
+        int pageSize,
+        Color color,
+        string? headerText = null)
+    {
+        if (lines.Count == 0)
+        {
+            var emptyEmbed = new EmbedBuilder()
+                .WithTitle(title)
+                .WithDescription("Nothing to display.")
+                .WithColor(color)
+                .Build();
+
+            await channel.SendMessageAsync(embed: emptyEmbed);
+            return;
+        }
+
+        int totalPages = (int)Math.Ceiling(lines.Count / (double)pageSize);
+        page = Math.Clamp(page, 0, Math.Max(0, totalPages - 1));
+
+        List<string> pageLines = lines
+            .Skip(page * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        string description = string.Join("\n", pageLines);
+
+        if (!string.IsNullOrWhiteSpace(headerText))
+            description = $"{headerText}\n\n{description}";
+
+        var embed = new EmbedBuilder()
+            .WithTitle(title)
+            .WithDescription(description)
+            .WithColor(color)
+            .WithFooter($"Page {page + 1}/{totalPages}")
+            .Build();
+
+        await channel.SendMessageAsync(
+            embed: embed,
+            components: BuildPaginatorComponents(paginatorType, page, totalPages));
+    }
+
+    private MessageComponent BuildPaginatorComponents(string paginatorType, int page, int totalPages)
+    {
+        bool hasPrevious = page > 0;
+        bool hasNext = page < totalPages - 1;
+
+        var builder = new ComponentBuilder()
+            .WithButton("Previous", $"page:{paginatorType}:{page - 1}", ButtonStyle.Secondary, disabled: !hasPrevious)
+            .WithButton("Next", $"page:{paginatorType}:{page + 1}", ButtonStyle.Primary, disabled: !hasNext);
+
+        return builder.Build();
+    }
+
+    private async Task HandlePaginatorButtonAsync(SocketMessageComponent component)
+    {
+        try
+        {
+            string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 3)
+            {
+                await component.RespondAsync("Invalid paginator button.", ephemeral: true);
+                return;
+            }
+
+            string paginatorType = parts[1];
+
+            if (!int.TryParse(parts[2], out int page))
+            {
+                await component.RespondAsync("Invalid page value.", ephemeral: true);
+                return;
+            }
+
+            List<string> lines;
+            string title;
+            string? headerText = null;
+            Color color;
+
+            switch (paginatorType)
+            {
+                case "botservers":
+                    if (_client == null)
+                    {
+                        await component.RespondAsync("Client not ready.", ephemeral: true);
+                        return;
+                    }
+
+                    lines = _client.Guilds
+                        .OrderByDescending(g => g.MemberCount)
+                        .ThenBy(g => g.Name)
+                        .Select((g, i) => $"**{i + 1}.** {g.Name}\nID: `{g.Id}` | Members: **{g.MemberCount}**")
+                        .ToList();
+                    title = "ApolloBot Connected Servers";
+                    headerText = $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}";
+                    color = Color.Gold;
+                    break;
+
+                case "abhelp":
+                    bool isAdmin = component.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
+                    lines = BuildApolloBotHelpLines(isAdmin);
+                    title = "📦 ApolloBot Commands";
+                    headerText = "Embed fixing, support, and utility commands.";
+                    color = Color.Teal;
+                    break;
+
+                default:
+                    await component.RespondAsync("Unknown paginator.", ephemeral: true);
+                    return;
+            }
+
+            if (lines.Count == 0)
+            {
+                await component.RespondAsync("Nothing to display.", ephemeral: true);
+                return;
+            }
+
+            int totalPages = (int)Math.Ceiling(lines.Count / (double)DefaultPageSize);
+            page = Math.Clamp(page, 0, Math.Max(0, totalPages - 1));
+
+            List<string> pageLines = lines
+                .Skip(page * DefaultPageSize)
+                .Take(DefaultPageSize)
+                .ToList();
+
+            string description = string.Join("\n", pageLines);
+
+            if (!string.IsNullOrWhiteSpace(headerText))
+                description = $"{headerText}\n\n{description}";
+
+            var embed = new EmbedBuilder()
+                .WithTitle(title)
+                .WithDescription(description)
+                .WithColor(color)
+                .WithFooter($"Page {page + 1}/{totalPages}")
+                .Build();
+
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(embed);
+                msg.Components = Optional.Create(BuildPaginatorComponents(paginatorType, page, totalPages));
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to handle paginator button: {ex}");
+
+            try
+            {
+                await component.RespondAsync("Something went wrong while changing pages.", ephemeral: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private List<string> BuildApolloBotHelpLines(bool isAdmin)
+    {
+        var lines = new List<string>
+        {
+            "**Public Commands**",
+            "`!ab help` – Show this menu",
+            "`!ab about` – What ApolloBot does",
+            "`!ab ping` – Check if the bot is alive",
+            "`!ab providers` – Show configured providers",
+            "`!ab perms` – Check channel permissions",
+            "`!ab status` – Show server settings",
+            "`!support` – Open support / bug report page",
+            "`!ab ignore on` – Ignore your embeds in this server",
+            "`!ab ignore off` – Stop ignoring your embeds in this server",
+            "`!ab ignore all` – Toggle ignore in all servers",
+            "`/roll` – Roll dice"
+        };
+
+        if (isAdmin)
+        {
+            lines.Add("");
+            lines.Add("**Admin Commands**");
+            lines.Add("`!embedfix on` – Enable embed fixing");
+            lines.Add("`!embedfix off` – Disable embed fixing");
+            lines.Add("`!ab whitelist add #channel`");
+            lines.Add("`!ab whitelist remove #channel`");
+            lines.Add("`!ab whitelist list`");
+            lines.Add("`!ab whitelist clear`");
+        }
+
+        lines.Add("");
+        lines.Add("**Roll Examples**");
+        lines.Add("`/roll`");
+        lines.Add("`/roll dice:1d20`");
+        lines.Add("`/roll dice:1d20+6`");
+        lines.Add("`/roll dice:1d20 mode:advantage`");
+        lines.Add("`/roll dice:1d20+4 mode:disadvantage`");
+        lines.Add("`/roll dice:2d6+3`");
+
+        return lines;
+    }
+
+    private GuildActivityState GetOrCreateGuildActivityState(SocketGuild guild)
+    {
+        if (_guildActivity.TryGetValue(guild.Id, out GuildActivityState? existing))
+            return existing;
+
+        var created = new GuildActivityState
+        {
+            GuildId = guild.Id,
+            ServerName = guild.Name,
+            LastKnownMemberCount = guild.MemberCount,
+            OwnerId = guild.OwnerId,
+            OwnerName = guild.Owner != null ? $"{guild.Owner.Username}#{guild.Owner.Discriminator}" : "Unknown",
+            FirstSeenAtUtc = DateTime.UtcNow,
+            LastJoinedAtUtc = DateTime.UtcNow,
+            LastUpdatedAtUtc = DateTime.UtcNow
+        };
+
+        _guildActivity[guild.Id] = created;
+        return created;
+    }
+
+    private void EnsureGuildUsageStatsEntry(SocketGuild guild)
+    {
+        if (_guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? existing))
+        {
+            existing.ServerName = guild.Name;
+            existing.LastKnownMemberCount = guild.MemberCount;
+            existing.LastUpdatedAtUtc = DateTime.UtcNow;
+            return;
+        }
+
+        _guildUsageStats[guild.Id] = new GuildUsageStats
+        {
+            GuildId = guild.Id,
+            ServerName = guild.Name,
+            LastKnownMemberCount = guild.MemberCount,
+            FirstSeenAtUtc = DateTime.UtcNow,
+            LastUpdatedAtUtc = DateTime.UtcNow
+        };
+    }
+
+    private void RecordGuildEmbedFix(SocketGuild guild)
+    {
+        EnsureGuildUsageStatsEntry(guild);
+
+        GuildUsageStats stats = _guildUsageStats[guild.Id];
+        stats.EmbedFixCount++;
+        stats.ServerName = guild.Name;
+        stats.LastKnownMemberCount = guild.MemberCount;
+        stats.LastUsedAtUtc = DateTime.UtcNow;
+        stats.LastUpdatedAtUtc = DateTime.UtcNow;
+
+        SaveGuildUsageStats();
+    }
+
+    private async Task SendTopServersByUsageAsync(SocketTextChannel channel)
+    {
+        var top = _guildUsageStats.Values
+            .OrderByDescending(x => x.EmbedFixCount)
+            .ThenByDescending(x => x.LastUsedAtUtc)
+            .Take(10)
+            .ToList();
+
+        if (top.Count == 0)
+        {
+            await channel.SendMessageAsync("No per-server embed usage has been recorded yet.");
+            return;
+        }
+
+        string lines = string.Join("\n", top.Select((x, i) =>
+            $"**{i + 1}.** {x.ServerName} (`{x.GuildId}`) — **{x.EmbedFixCount}** fixes"));
+
+        var embed = new EmbedBuilder()
+            .WithTitle("Top Servers by ApolloBot Usage")
+            .WithDescription(lines)
+            .WithColor(Color.DarkBlue)
+            .WithCurrentTimestamp()
+            .Build();
+
+        await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SendSingleServerStatsAsync(SocketTextChannel channel, string[] parts)
+    {
+        if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong guildId))
+        {
+            await channel.SendMessageAsync("Usage: `!bot serverstats <serverId>`");
+            return;
+        }
+
+        _guildUsageStats.TryGetValue(guildId, out GuildUsageStats? usageStats);
+        _guildActivity.TryGetValue(guildId, out GuildActivityState? activity);
+
+        SocketGuild? liveGuild = _client?.GetGuild(guildId);
+
+        if (usageStats == null && activity == null && liveGuild == null)
+        {
+            await channel.SendMessageAsync("I don't have any tracked data for that server ID.");
+            return;
+        }
+
+        string serverName = liveGuild?.Name
+            ?? usageStats?.ServerName
+            ?? activity?.ServerName
+            ?? "Unknown";
+
+        int members = liveGuild?.MemberCount
+            ?? usageStats?.LastKnownMemberCount
+            ?? activity?.LastKnownMemberCount
+            ?? 0;
+
+        DateTime? joinedAt = activity?.LastJoinedAtUtc == default ? null : activity?.LastJoinedAtUtc;
+        DateTime? removedAt = activity?.LastRemovedAtUtc == default ? null : activity?.LastRemovedAtUtc;
+        DateTime? lastUsedAt = usageStats?.LastUsedAtUtc == default ? null : usageStats?.LastUsedAtUtc;
+
+        string retentionText = "Still in server / unknown";
+        if (joinedAt.HasValue && removedAt.HasValue && removedAt.Value >= joinedAt.Value)
+            retentionText = FormatDuration(removedAt.Value - joinedAt.Value);
+
+        var embed = new EmbedBuilder()
+            .WithTitle("ApolloBot Server Stats")
+            .AddField("Server", serverName, true)
+            .AddField("Server ID", guildId.ToString(), true)
+            .AddField("Members", members, true)
+            .AddField("Embed Fixes", usageStats?.EmbedFixCount ?? 0, true)
+            .AddField("Last Used", lastUsedAt.HasValue ? lastUsedAt.Value.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") : "Never", true)
+            .AddField("Joined At", joinedAt.HasValue ? joinedAt.Value.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") : "Unknown", true)
+            .AddField("Removed At", removedAt.HasValue ? removedAt.Value.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") : "Still present / unknown", true)
+            .AddField("Time In Server", retentionText, true)
+            .WithColor(Color.DarkTeal)
+            .WithCurrentTimestamp()
+            .Build();
+
+        await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SyncGuildTrackingStateAsync()
+    {
+        if (_client == null)
+            return;
+
+        foreach (SocketGuild guild in _client.Guilds)
+        {
+            GuildActivityState activity = GetOrCreateGuildActivityState(guild);
+
+            activity.ServerName = guild.Name;
+            activity.LastKnownMemberCount = guild.MemberCount;
+            activity.OwnerId = guild.OwnerId;
+            activity.OwnerName = guild.Owner != null
+                ? $"{guild.Owner.Username}#{guild.Owner.Discriminator}"
+                : activity.OwnerName;
+
+            if (activity.FirstSeenAtUtc == default)
+                activity.FirstSeenAtUtc = DateTime.UtcNow;
+
+            if (activity.LastJoinedAtUtc == default)
+                activity.LastJoinedAtUtc = DateTime.UtcNow;
+
+            activity.LastUpdatedAtUtc = DateTime.UtcNow;
+
+            EnsureGuildUsageStatsEntry(guild);
+        }
+
+        SaveGuildActivityState();
+        SaveGuildUsageStats();
+    }
+
+    private async Task SendGuildLifecycleLogAsync(SocketGuild guild, bool joined, GuildActivityState activity)
+    {
+        if (_ownerLogChannelId == 0 || _client == null)
+            return;
+
+        if (_client.GetChannel(_ownerLogChannelId) is not IMessageChannel channel)
+            return;
+
+        int liveServerCount = _client.Guilds.Count;
+        int liveUserCount = _client.Guilds.Sum(x => x.MemberCount);
+
+        string ownerText = activity.OwnerId == 0
+            ? activity.OwnerName
+            : $"{activity.OwnerName} (`{activity.OwnerId}`)";
+
+        string retentionText = "Unknown";
+
+        if (!joined && activity.LastJoinedAtUtc != default && activity.LastRemovedAtUtc != default && activity.LastRemovedAtUtc >= activity.LastJoinedAtUtc)
+            retentionText = FormatDuration(activity.LastRemovedAtUtc - activity.LastJoinedAtUtc);
+
+        var embed = new EmbedBuilder()
+            .WithTitle(joined ? "ApolloBot Joined a Server" : "ApolloBot Left a Server")
+            .WithColor(joined ? Color.Green : Color.Red)
+            .AddField("Server", string.IsNullOrWhiteSpace(guild.Name) ? activity.ServerName : guild.Name, true)
+            .AddField("Server ID", guild.Id.ToString(), true)
+            .AddField("Members", guild.MemberCount > 0 ? guild.MemberCount : activity.LastKnownMemberCount, true)
+            .AddField("Owner", ownerText, false)
+            .AddField(joined ? "Joined At" : "Removed At", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"), true)
+            .AddField("Total Servers", liveServerCount, true)
+            .AddField("Total Users", liveUserCount, true)
+            .WithCurrentTimestamp();
+
+        if (!joined)
+            embed.AddField("Time In Server", retentionText, true);
+
+        await channel.SendMessageAsync(embed: embed.Build());
+    }
+
+    private void SaveGuildActivityState()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_guildActivity, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(GuildActivityStateFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save guild activity state: {ex}");
+        }
+    }
+
+    private void LoadGuildActivityState()
+    {
+        try
+        {
+            if (!File.Exists(GuildActivityStateFilePath))
+                return;
+
+            string json = File.ReadAllText(GuildActivityStateFilePath);
+            Dictionary<ulong, GuildActivityState>? loaded =
+                JsonSerializer.Deserialize<Dictionary<ulong, GuildActivityState>>(json);
+
+            _guildActivity.Clear();
+
+            if (loaded != null)
+            {
+                foreach ((ulong guildId, GuildActivityState state) in loaded)
+                    _guildActivity[guildId] = state;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load guild activity state: {ex}");
+        }
+    }
+
+    private void SaveGuildUsageStats()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_guildUsageStats, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(GuildUsageStatsFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save guild usage stats: {ex}");
+        }
+    }
+
+    private void LoadGuildUsageStats()
+    {
+        try
+        {
+            if (!File.Exists(GuildUsageStatsFilePath))
+                return;
+
+            string json = File.ReadAllText(GuildUsageStatsFilePath);
+            Dictionary<ulong, GuildUsageStats>? loaded =
+                JsonSerializer.Deserialize<Dictionary<ulong, GuildUsageStats>>(json);
+
+            _guildUsageStats.Clear();
+
+            if (loaded != null)
+            {
+                foreach ((ulong guildId, GuildUsageStats stats) in loaded)
+                    _guildUsageStats[guildId] = stats;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load guild usage stats: {ex}");
         }
     }
 
@@ -2557,6 +3144,7 @@ class Program
             EmbedsFixed = embedsFixed,
             ServerCount = serverCount,
             TotalUsers = totalUsers,
+            TrackedUsageServers = _guildUsageStats.Count,
             Uptime = FormatDuration(TimeSpan.FromSeconds(totalUptimeSeconds)),
             PlatformCount = _providers.Count,
             TotalUptimeSeconds = totalUptimeSeconds,
@@ -2934,6 +3522,30 @@ class Program
     }
 }
 
+class GuildActivityState
+{
+    public ulong GuildId { get; set; }
+    public string ServerName { get; set; } = "Unknown";
+    public int LastKnownMemberCount { get; set; }
+    public ulong OwnerId { get; set; }
+    public string OwnerName { get; set; } = "Unknown";
+    public DateTime FirstSeenAtUtc { get; set; }
+    public DateTime LastJoinedAtUtc { get; set; }
+    public DateTime LastRemovedAtUtc { get; set; }
+    public DateTime LastUpdatedAtUtc { get; set; }
+}
+
+class GuildUsageStats
+{
+    public ulong GuildId { get; set; }
+    public string ServerName { get; set; } = "Unknown";
+    public long EmbedFixCount { get; set; }
+    public int LastKnownMemberCount { get; set; }
+    public DateTime FirstSeenAtUtc { get; set; }
+    public DateTime LastUsedAtUtc { get; set; }
+    public DateTime LastUpdatedAtUtc { get; set; }
+}
+
 class BotPresenceSettings
 {
     public string Text { get; set; } = "Running 24/7";
@@ -2999,6 +3611,7 @@ class PublicStatsPayload
     public long EmbedsFixed { get; set; }
     public int ServerCount { get; set; }
     public int TotalUsers { get; set; }
+    public int TrackedUsageServers { get; set; }
     public string Uptime { get; set; } = "";
     public int PlatformCount { get; set; }
     public long TotalUptimeSeconds { get; set; }
