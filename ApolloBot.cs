@@ -577,6 +577,25 @@ class Program
             return;
         }
 
+        if (sub == "setembeds")
+        {
+            if (parts.Length < 3 || !long.TryParse(parts[2], out long newCount) || newCount < 0)
+            {
+                await textChannel.SendMessageAsync("Usage: `!bot setembeds <number>`");
+                return;
+            }
+
+            lock (_statsLock)
+            {
+                _embedsFixedCount = newCount;
+            }
+
+            SaveBotStatsHeartbeat();
+
+            await textChannel.SendMessageAsync($"✅ Embeds fixed count set to **{newCount}**.");
+            return;
+        }
+
         if (sub == "servers")
         {
             if (_client == null)
@@ -655,23 +674,15 @@ class Program
 
     private async Task SendBotHelp(SocketTextChannel channel)
     {
-        var embed = new EmbedBuilder()
-            .WithTitle("Bot Owner Commands")
-            .WithDescription("Owner-only controls.")
-            .AddField("!bot help", "Show this help.", false)
-            .AddField("!bot status <type> <status> <text>", "Change the bot presence without editing code.", false)
-            .AddField("!bot servercount", "Show how many servers the bot is in.", false)
-            .AddField("!bot servers", "List connected servers with pagination.", false)
-            .AddField("!bot topservers", "Show the most-used servers by embed fixes.", false)
-            .AddField("!bot serverstats <serverId>", "Show detailed stats for one server.", false)
-            .AddField("!bot stats", "Show bot stats and uptime.", false)
-            .AddField("!bot provider ...", "Manage platform providers dynamically.", false)
-            .AddField("!bot special ...", "Manage approved silly Twitter/X users.", false)
-            .AddField("!bot update ...", "Manage the public planned updates list.", false)
-            .WithColor(Color.DarkPurple)
-            .Build();
-
-        await channel.SendMessageAsync(embed: embed);
+        await SendPaginatedEmbedAsync(
+            channel,
+            "👑 Bot Owner Commands",
+            BuildBotOwnerHelpLines(),
+            "bothelp",
+            page: 0,
+            pageSize: DefaultPageSize,
+            color: Color.DarkPurple,
+            headerText: "Owner-only controls and maintenance commands.");
     }
 
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
@@ -1866,6 +1877,13 @@ class Program
                     color = Color.Teal;
                     break;
 
+                case "bothelp":
+                    lines = BuildBotOwnerHelpLines();
+                    title = "👑 Bot Owner Commands";
+                    headerText = "Owner-only controls and maintenance commands.";
+                    color = Color.DarkPurple;
+                    break;
+
                 default:
                     await component.RespondAsync("Unknown paginator.", ephemeral: true);
                     return;
@@ -1915,6 +1933,27 @@ class Program
             {
             }
         }
+    }
+
+    private List<string> BuildBotOwnerHelpLines()
+    {
+        return new List<string>
+        {
+            "**Core Owner Commands**",
+            "`!bot help` – Show this menu",
+            "`!bot stats` – Show bot stats and uptime",
+            "`!bot servercount` – Show total connected servers",
+            "`!bot servers` – List connected servers with pagination",
+            "`!bot topservers` – Show most-used servers by embed fixes",
+            "`!bot serverstats <serverId>` – Show detailed stats for one server",
+            "`!bot setembeds <number>` – Manually set the embeds fixed count",
+            "",
+            "**Bot Management**",
+            "`!bot status <type> <status> <text>` – Change bot presence",
+            "`!bot provider ...` – Manage platform providers",
+            "`!bot special ...` – Manage silly Twitter/X users",
+            "`!bot update ...` – Manage public planned updates"
+        };
     }
 
     private List<string> BuildApolloBotHelpLines(bool isAdmin)
