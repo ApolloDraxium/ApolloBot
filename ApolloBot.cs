@@ -596,6 +596,39 @@ class Program
             return;
         }
 
+        if (sub == "setservicetime")
+        {
+            if (parts.Length < 3)
+            {
+                await textChannel.SendMessageAsync(
+                    "Usage: `!bot setservicetime <duration>`\n" +
+                    "Examples: `!bot setservicetime 11d`, `!bot setservicetime 11d12h`, `!bot setservicetime 3h30m`, `!bot setservicetime 90m`");
+                return;
+            }
+
+            string durationText = string.Concat(parts.Skip(2));
+
+            if (!TryParseDurationInput(durationText, out long totalSeconds) || totalSeconds < 0)
+            {
+                await textChannel.SendMessageAsync(
+                    "Invalid duration. Examples: `11d`, `11d12h`, `3h30m`, `90m`, `3600s`");
+                return;
+            }
+
+            lock (_statsLock)
+            {
+                _accumulatedUptimeSeconds = totalSeconds;
+                _uptimeHistory = new List<UptimeSession>();
+                _sessionStartedAtUtc = DateTime.UtcNow;
+                _lastHeartbeatUtc = _sessionStartedAtUtc;
+            }
+
+            SaveBotStatsHeartbeat();
+
+            await textChannel.SendMessageAsync($"✅ Service time set to **{FormatDuration(TimeSpan.FromSeconds(totalSeconds))}**.");
+            return;
+        }
+
         if (sub == "servers")
         {
             if (_client == null)
@@ -1583,6 +1616,55 @@ class Program
         };
     }
 
+
+    private bool TryParseDurationInput(string input, out long totalSeconds)
+    {
+        totalSeconds = 0;
+
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
+
+        string normalized = input.Trim().ToLowerInvariant().Replace(" ", "");
+
+        MatchCollection matches = Regex.Matches(normalized, @"(\d+)([dhms])", RegexOptions.IgnoreCase);
+
+        if (matches.Count == 0)
+            return false;
+
+        string rebuilt = string.Concat(matches.Select(m => m.Value));
+        if (!string.Equals(rebuilt, normalized, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        long seconds = 0;
+
+        foreach (Match match in matches)
+        {
+            if (!long.TryParse(match.Groups[1].Value, out long value))
+                return false;
+
+            switch (match.Groups[2].Value.ToLowerInvariant())
+            {
+                case "d":
+                    seconds += value * 86400;
+                    break;
+                case "h":
+                    seconds += value * 3600;
+                    break;
+                case "m":
+                    seconds += value * 60;
+                    break;
+                case "s":
+                    seconds += value;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        totalSeconds = seconds;
+        return true;
+    }
+
     private RollResult ExecuteRoll(RollRequest request)
     {
         var result = new RollResult
@@ -1947,6 +2029,7 @@ class Program
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot serverstats <serverId>` – Show detailed stats for one server",
             "`!bot setembeds <number>` – Manually set the embeds fixed count",
+            "`!bot setservicetime <duration>` – Manually set total service time",
             "",
             "**Bot Management**",
             "`!bot status <type> <status> <text>` – Change bot presence",
