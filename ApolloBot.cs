@@ -43,7 +43,9 @@ class Program
     private const string WebhookName = "Apollo Bot Relay";
 
     private static readonly string DataDirectory =
-        Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "data";
+    Environment.GetEnvironmentVariable("APP_DATA_PATH")
+    ?? Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+    ?? "/app/data";
 
     private static readonly string BotStatsStateFilePath =
         Path.Combine(DataDirectory, "bot_stats_state.json");
@@ -104,6 +106,32 @@ class Program
     public async Task MainAsync()
     {
         Directory.CreateDirectory(DataDirectory);
+
+Console.WriteLine($"[DATA] APP_DATA_PATH = {Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "(null)"}");
+Console.WriteLine($"[DATA] RAILWAY_VOLUME_MOUNT_PATH = {Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH") ?? "(null)"}");
+Console.WriteLine($"[DATA] Using data directory: {DataDirectory}");
+Console.WriteLine($"[DATA] Directory exists: {Directory.Exists(DataDirectory)}");
+
+try
+{
+    string[] files = Directory.GetFiles(DataDirectory);
+    Console.WriteLine($"[DATA] Files present: {(files.Length == 0 ? "(none)" : string.Join(", ", files.Select(Path.GetFileName)))}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[DATA] Failed to enumerate files: {ex.Message}");
+}
+
+try
+{
+    string testFile = Path.Combine(DataDirectory, "volume_test.txt");
+    File.WriteAllText(testFile, $"ApolloBot test write {DateTime.UtcNow:O}");
+    Console.WriteLine($"[DATA] Wrote test file: {testFile}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[DATA] Failed to write test file: {ex}");
+}
         LoadRelayStates();
         LoadGuildSettings();
         LoadUserIgnoreSettings();
