@@ -102,7 +102,7 @@ class Program
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
 
     static Task Main(string[] args) => new Program().MainAsync();
-
+    DataPathHelper.EnsureAndLog();
     public async Task MainAsync()
     {
         Directory.CreateDirectory(DataDirectory);
