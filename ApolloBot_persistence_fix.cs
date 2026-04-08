@@ -9,8 +9,8 @@ public static class DataPathHelper
 {
     public static string GetDataPath()
     {
-        return Environment.GetEnvironmentVariable("APP_DATA_PATH")
-            ?? Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+        return Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+            ?? Environment.GetEnvironmentVariable("APP_DATA_PATH")
             ?? "/app/data";
     }
 

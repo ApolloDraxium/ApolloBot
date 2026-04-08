@@ -42,9 +42,9 @@ class Program
 
     private const string WebhookName = "Apollo Bot Relay";
 
-    private static readonly string DataDirectory =
-    Environment.GetEnvironmentVariable("APP_DATA_PATH")
-    ?? Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+    private static readonly string DataDirectory = DataPathHelper.GetDataPath();
+    Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+    ?? Environment.GetEnvironmentVariable("APP_DATA_PATH")
     ?? "/app/data";
 
     private static readonly string BotStatsStateFilePath =
