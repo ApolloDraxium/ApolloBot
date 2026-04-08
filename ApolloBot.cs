@@ -15,6 +15,41 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
+public static class DataPathHelper
+{
+    public static string GetDataPath()
+    {
+        return Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
+            ?? Environment.GetEnvironmentVariable("APP_DATA_PATH")
+            ?? "/app/data";
+    }
+
+    public static void EnsureAndLog()
+    {
+        var path = GetDataPath();
+        Directory.CreateDirectory(path);
+
+        Console.WriteLine($"[DATA] APP_DATA_PATH = {Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "(null)"}");
+        Console.WriteLine($"[DATA] RAILWAY_VOLUME_MOUNT_PATH = {Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH") ?? "(null)"}");
+        Console.WriteLine($"[DATA] Using path: {path}");
+        Console.WriteLine($"[DATA] Exists: {Directory.Exists(path)}");
+
+        try
+        {
+            var testFile = Path.Combine(path, "volume_test.txt");
+            File.WriteAllText(testFile, $"Test write at {DateTime.UtcNow:O}");
+            Console.WriteLine($"[DATA] Test write success: {testFile}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DATA] Test write FAILED: {ex}");
+        }
+
+        var files = Directory.GetFiles(path);
+        Console.WriteLine($"[DATA] Files: {string.Join(", ", files.Select(Path.GetFileName))}");
+    }
+}
+
 class Program
 {
     private DiscordSocketClient? _client;
@@ -43,9 +78,6 @@ class Program
     private const string WebhookName = "Apollo Bot Relay";
 
     private static readonly string DataDirectory = DataPathHelper.GetDataPath();
-    Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH")
-    ?? Environment.GetEnvironmentVariable("APP_DATA_PATH")
-    ?? "/app/data";
 
     private static readonly string BotStatsStateFilePath =
         Path.Combine(DataDirectory, "bot_stats_state.json");
@@ -101,37 +133,16 @@ class Program
     private static readonly TimeSpan ButtonCooldown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
 
-    static Task Main(string[] args) => new Program().MainAsync();
-    DataPathHelper.EnsureAndLog();
+    static Task Main(string[] args)
+    {
+        DataPathHelper.EnsureAndLog();
+        return new Program().MainAsync();
+    }
+
     public async Task MainAsync()
     {
         Directory.CreateDirectory(DataDirectory);
 
-Console.WriteLine($"[DATA] APP_DATA_PATH = {Environment.GetEnvironmentVariable("APP_DATA_PATH") ?? "(null)"}");
-Console.WriteLine($"[DATA] RAILWAY_VOLUME_MOUNT_PATH = {Environment.GetEnvironmentVariable("RAILWAY_VOLUME_MOUNT_PATH") ?? "(null)"}");
-Console.WriteLine($"[DATA] Using data directory: {DataDirectory}");
-Console.WriteLine($"[DATA] Directory exists: {Directory.Exists(DataDirectory)}");
-
-try
-{
-    string[] files = Directory.GetFiles(DataDirectory);
-    Console.WriteLine($"[DATA] Files present: {(files.Length == 0 ? "(none)" : string.Join(", ", files.Select(Path.GetFileName)))}");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[DATA] Failed to enumerate files: {ex.Message}");
-}
-
-try
-{
-    string testFile = Path.Combine(DataDirectory, "volume_test.txt");
-    File.WriteAllText(testFile, $"ApolloBot test write {DateTime.UtcNow:O}");
-    Console.WriteLine($"[DATA] Wrote test file: {testFile}");
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[DATA] Failed to write test file: {ex}");
-}
         LoadRelayStates();
         LoadGuildSettings();
         LoadUserIgnoreSettings();
