@@ -1057,7 +1057,7 @@ class Program
         var embed = new EmbedBuilder()
             .WithTitle("About ApolloBot")
             .WithDescription("Replaces supported social links with embed-friendly providers and reposts them through a webhook relay.")
-            .AddField("Supported Platforms", "Twitter/X, Reddit, TikTok, Instagram", false)
+            .AddField("Supported Platforms", "Twitter/X, Reddit, TikTok, Instagram, Bluesky", false)
             .AddField("Features",
                 "• Provider cycling buttons\n" +
                 "• Original poster-only controls\n" +
@@ -1318,7 +1318,7 @@ class Program
 
             if (!_providers.TryGetValue(platform, out List<string>? listedProviders))
             {
-                await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, or instagram.");
+                await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, instagram, or bluesky.");
                 return;
             }
 
@@ -1337,7 +1337,7 @@ class Program
 
         if (!_providers.ContainsKey(targetPlatform))
         {
-            await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, or instagram.");
+            await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, instagram, or bluesky.");
             return;
         }
 
@@ -1610,7 +1610,7 @@ class Program
         if (detectedPlatforms.Count == 0)
         {
             await command.RespondAsync(
-                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram.",
+                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Bluesky.",
                 ephemeral: true);
             return;
         }
@@ -2792,6 +2792,7 @@ class Program
             "reddit" => "Fix Reddit",
             "tiktok" => "Fix TikTok",
             "instagram" => "Fix Instagram",
+            "bluesky" => "Fix Bluesky",
             _ => "Fix Embed"
         };
     }
@@ -2804,6 +2805,7 @@ class Program
             "reddit" => "Reddit",
             "tiktok" => "TikTok",
             "instagram" => "Instagram",
+            "bluesky" => "Bluesky",
             _ => platform
         };
     }
@@ -2838,6 +2840,9 @@ class Program
         if (ContainsInstagramLink(text))
             platforms.Add("instagram");
 
+        if (ContainsBlueskyLink(text))
+            platforms.Add("bluesky");
+
         return platforms;
     }
 
@@ -2866,6 +2871,9 @@ class Program
 
         if (providerIndexes.ContainsKey("instagram"))
             result = ReplaceInstagramLinks(result, providerIndexes["instagram"], originalAuthorId);
+
+        if (providerIndexes.ContainsKey("bluesky"))
+            result = ReplaceBlueskyLinks(result, providerIndexes["bluesky"], originalAuthorId);
 
         return result;
     }
@@ -2899,6 +2907,14 @@ class Program
         return Regex.IsMatch(
             text,
             @"https?://(www\.)?instagram\.com(/|$)",
+            RegexOptions.IgnoreCase);
+    }
+
+    private bool ContainsBlueskyLink(string text)
+    {
+        return Regex.IsMatch(
+            text,
+            @"https?://(www\.)?bsky\.app(/|$)",
             RegexOptions.IgnoreCase);
     }
 
@@ -2992,6 +3008,27 @@ class Program
         text = Regex.Replace(
             text,
             @"https?://(www\.)?instagram\.com",
+            $"https://{replacementDomain}",
+            RegexOptions.IgnoreCase);
+
+        return text;
+    }
+
+    private string ReplaceBlueskyLinks(string text, int providerIndex, ulong originalAuthorId)
+    {
+        List<string> blueskyProviders = GetProvidersForPlatform("bluesky", originalAuthorId);
+
+        if (blueskyProviders.Count == 0)
+            return text;
+
+        if (providerIndex < 0 || providerIndex >= blueskyProviders.Count)
+            providerIndex = 0;
+
+        string replacementDomain = blueskyProviders[providerIndex];
+
+        text = Regex.Replace(
+            text,
+            @"https?://(www\.)?bsky\.app",
             $"https://{replacementDomain}",
             RegexOptions.IgnoreCase);
 
@@ -3617,6 +3654,15 @@ class Program
                 {
                     "eeinstagram.com",
                     "kkinstagram.com"
+                }
+            },
+            {
+                "bluesky",
+                new List<string>
+                {
+                    "fxbsky.app",
+                    "bskye.app",
+                    "bskx.app"
                 }
             }
         };
