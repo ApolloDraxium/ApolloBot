@@ -1696,17 +1696,15 @@ class Program
             return;
         }
 
-        string platformList = string.Join(", ", platforms.Select(FormatPlatformName));
+        if (fixedText.Length > 2000)
+        {
+            await command.RespondAsync(
+                "The fixed result is too long to send in one message. Try a shorter message or a single link.",
+                ephemeral: true);
+            return;
+        }
 
-        var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Link Fixer")
-            .WithDescription(fixedText)
-            .AddField("Detected", platformList, false)
-            .WithColor(Color.Gold)
-            .WithFooter("Manual, opt-in link fixing")
-            .Build();
-
-        await command.RespondAsync(embed: embed, ephemeral: true);
+        await command.RespondAsync(fixedText);
     }
 
     private bool TryBuildFixedContent(string inputText, ulong originalAuthorId, out string fixedText, out List<string> platforms)
