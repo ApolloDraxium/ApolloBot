@@ -2827,13 +2827,13 @@ class Program
     {
         return platform switch
         {
-            "twitter" => "Try Another X",
-            "reddit" => "Try Another Reddit",
-            "tiktok" => "Try Another TikTok",
-            "instagram" => "Try Another Instagram",
-            "bluesky" => "Try Another Bluesky",
-            "threads" => "Try Another Threads (Exp)",
-            _ => "Try Another"
+            "twitter" => "Fix Embed",
+            "reddit" => "Fix Embed",
+            "tiktok" => "Fix Embed",
+            "instagram" => "Fix Embed",
+            "bluesky" => "TFix Embed",
+            "threads" => "Fix Embed (Exp)",
+            _ => "Fix Embed"
         };
     }
 
