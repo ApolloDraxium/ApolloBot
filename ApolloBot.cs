@@ -325,6 +325,15 @@ class Program
                 .AddChoice("advantage", "advantage")
                 .AddChoice("disadvantage", "disadvantage"));
 
+        var fixCommand = new SlashCommandBuilder()
+            .WithName("fix")
+            .WithDescription("Fix supported social links for embeds.")
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("text")
+                .WithDescription("A supported link or a message containing supported links")
+                .WithType(ApplicationCommandOptionType.String)
+                .WithRequired(true));
+
         try
         {
             if (TestGuildId != 0)
@@ -338,7 +347,8 @@ class Program
 
                 await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
                 {
-                    rollCommand.Build()
+                    rollCommand.Build(),
+                    fixCommand.Build()
                 });
 
                 Console.WriteLine($"Registered slash commands in test guild: {guild.Name} ({guild.Id})");
@@ -347,7 +357,8 @@ class Program
             {
                 await _client.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
                 {
-                    rollCommand.Build()
+                    rollCommand.Build(),
+                    fixCommand.Build()
                 });
 
                 Console.WriteLine("Registered global slash commands.");
@@ -1515,6 +1526,12 @@ class Program
                 await HandleRollSlashCommand(command);
                 return;
             }
+
+            if (command.Data.Name == "fix")
+            {
+                await HandleFixSlashCommand(command);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -1655,6 +1672,62 @@ class Program
         };
     }
 
+
+
+    private async Task HandleFixSlashCommand(SocketSlashCommand command)
+    {
+        string inputText = command.Data.Options
+            .FirstOrDefault(x => x.Name == "text")?
+            .Value?
+            .ToString()?
+            .Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(inputText))
+        {
+            await command.RespondAsync("Please provide a supported link or a message containing supported links.", ephemeral: true);
+            return;
+        }
+
+        if (!TryBuildFixedContent(inputText, command.User.Id, out string fixedText, out List<string> platforms))
+        {
+            await command.RespondAsync(
+                "I couldn't find a supported Twitter/X, Reddit, TikTok, or Instagram link in that text.",
+                ephemeral: true);
+            return;
+        }
+
+        string platformList = string.Join(", ", platforms.Select(FormatPlatformName));
+
+        var embed = new EmbedBuilder()
+            .WithTitle("ApolloBot Link Fixer")
+            .WithDescription(fixedText)
+            .AddField("Detected", platformList, false)
+            .WithColor(Color.Gold)
+            .WithFooter("Manual, opt-in link fixing")
+            .Build();
+
+        await command.RespondAsync(embed: embed, ephemeral: true);
+    }
+
+    private bool TryBuildFixedContent(string inputText, ulong originalAuthorId, out string fixedText, out List<string> platforms)
+    {
+        fixedText = inputText;
+        platforms = GetPlatformsInText(inputText)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (platforms.Count == 0)
+            return false;
+
+        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(platforms);
+        string replaced = ApplyAllReplacements(inputText, providerIndexes, originalAuthorId);
+
+        if (string.Equals(replaced, inputText, StringComparison.Ordinal))
+            return false;
+
+        fixedText = replaced;
+        return true;
+    }
 
     private bool TryParseDurationInput(string input, out long totalSeconds)
     {
@@ -2093,7 +2166,8 @@ class Program
             "`!ab ignore on` – Ignore your embeds in this server",
             "`!ab ignore off` – Stop ignoring your embeds in this server",
             "`!ab ignore all` – Toggle ignore in all servers",
-            "`/roll` – Roll dice"
+            "`/roll` – Roll dice",
+            "`/fix text:<link or message>` – Manually fix supported social links"
         };
 
         if (isAdmin)
@@ -2116,6 +2190,10 @@ class Program
         lines.Add("`/roll dice:1d20 mode:advantage`");
         lines.Add("`/roll dice:1d20+4 mode:disadvantage`");
         lines.Add("`/roll dice:2d6+3`");
+        lines.Add("");
+        lines.Add("**Fix Examples**");
+        lines.Add("`/fix text:https://x.com/...`");
+        lines.Add("`/fix text:check this out https://reddit.com/...`");
 
         return lines;
     }
