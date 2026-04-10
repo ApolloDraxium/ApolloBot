@@ -473,6 +473,8 @@ class Program
         if (ShouldIgnoreUser(textChannel.Guild.Id, userMessage.Author.Id))
             return;
 
+        GuildSettings settings = GetOrCreateGuildSettings(textChannel.Guild.Id);
+
         string originalContent = message.Content;
         List<string> detectedPlatforms = GetPlatformsInText(originalContent);
 
