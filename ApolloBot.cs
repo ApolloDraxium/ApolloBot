@@ -64,7 +64,7 @@ class Program
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
-    private static readonly ulong TestGuildId = 1486178596765565009;
+    private static readonly ulong TestGuildId = 0;
 
     private Dictionary<string, List<string>> _providers = CreateDefaultProviders();
     private readonly HashSet<ulong> _specialTwitterUsers = new();
