@@ -64,7 +64,7 @@ class Program
 
     // Use your test server ID for fast slash command registration.
     // Set to 0 to register globally instead.
-    private static readonly ulong TestGuildId = 0;
+    private static readonly ulong TestGuildId = 1486178596765565009;
 
     private Dictionary<string, List<string>> _providers = CreateDefaultProviders();
     private readonly HashSet<ulong> _specialTwitterUsers = new();
@@ -170,7 +170,6 @@ class Program
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
-        _client.MessageCommandExecuted += MessageCommandExecuted;
 
         string? token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
 
@@ -228,6 +227,8 @@ class Program
     {
         try
         {
+            Console.WriteLine($"[JOIN] Joined guild: {guild.Name} ({guild.Id})");
+
             GuildActivityState activity = GetOrCreateGuildActivityState(guild);
             activity.ServerName = guild.Name;
             activity.LastKnownMemberCount = guild.MemberCount;
@@ -244,39 +245,72 @@ class Program
 
             await SendGuildLifecycleLogAsync(guild, joined: true, activity);
 
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
             if (_client?.CurrentUser == null)
+            {
+                Console.WriteLine("[JOIN] CurrentUser is null, skipping welcome message.");
                 return;
+            }
 
-            SocketTextChannel? channel = guild.TextChannels
-                .OrderBy(c => c.Position)
-                .FirstOrDefault(c =>
-                {
-                    SocketGuildUser? botUser = guild.GetUser(_client.CurrentUser.Id);
-                    if (botUser == null)
-                        return false;
+            SocketGuildUser? botUser = guild.GetUser(_client.CurrentUser.Id);
+            if (botUser == null)
+            {
+                Console.WriteLine($"[JOIN] Could not resolve bot user in guild '{guild.Name}'.");
+                return;
+            }
 
-                    ChannelPermissions perms = botUser.GetPermissions(c);
-                    return perms.ViewChannel && perms.SendMessages && perms.EmbedLinks;
-                });
+            SocketTextChannel? channel = null;
+
+            if (guild.SystemChannel != null)
+            {
+                ChannelPermissions systemPerms = botUser.GetPermissions(guild.SystemChannel);
+                if (systemPerms.ViewChannel && systemPerms.SendMessages && systemPerms.EmbedLinks)
+                    channel = guild.SystemChannel;
+            }
 
             if (channel == null)
+            {
+                channel = guild.TextChannels
+                    .OrderBy(c => c.Position)
+                    .FirstOrDefault(c =>
+                    {
+                        ChannelPermissions perms = botUser.GetPermissions(c);
+                        return perms.ViewChannel && perms.SendMessages && perms.EmbedLinks;
+                    });
+            }
+
+            if (channel == null)
+            {
+                Console.WriteLine($"[JOIN] No usable text channel found for welcome message in guild '{guild.Name}' ({guild.Id}).");
                 return;
+            }
 
             var embed = new EmbedBuilder()
                 .WithTitle("Hey! I'm ApolloBot 👋")
                 .WithDescription(
-                    "I fix embeds for:\n" +
-                    "Twitter / Reddit / TikTok / Instagram\n\n" +
-                    "**Use:**\n" +
-                    "`!embedfix on` *(To ensure I am fixing embeds)*\n" +
-                    "`!ab perms` *(To ensure I have the right permissions per channel)*\n" +
-                    "`!support` *(For bug reports, help, and feedback)*\n\n" +
-                    "**Optional:**\n" +
+                    "I fix embeds for:
+" +
+                    "Twitter / Reddit / TikTok / Instagram
+
+" +
+                    "**Use:**
+" +
+                    "`!embedfix on` *(To ensure I am fixing embeds)*
+" +
+                    "`!ab perms` *(To ensure I have the right permissions per channel)*
+" +
+                    "`!support` *(For bug reports, help, and feedback)*
+
+" +
+                    "**Optional:**
+" +
                     "`!ab help` *(For additional commands)*")
                 .WithColor(Color.Red)
                 .Build();
 
             await channel.SendMessageAsync(embed: embed);
+            Console.WriteLine($"[JOIN] Welcome message sent in #{channel.Name} ({channel.Id}) for guild '{guild.Name}'.");
         }
         catch (Exception ex)
         {
@@ -326,22 +360,6 @@ class Program
                 .AddChoice("advantage", "advantage")
                 .AddChoice("disadvantage", "disadvantage"));
 
-        var fixCommand = new SlashCommandBuilder()
-            .WithName("fix")
-            .WithDescription("Fix supported social links for embeds.")
-            .WithIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
-            .WithContextTypes(InteractionContextType.Guild, InteractionContextType.BotDm, InteractionContextType.PrivateChannel)
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("text")
-                .WithDescription("A supported link or a message containing supported links")
-                .WithType(ApplicationCommandOptionType.String)
-                .WithRequired(true));
-
-        var fixMessageCommand = new MessageCommandBuilder()
-            .WithName("Fix Embed")
-            .WithIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
-            .WithContextTypes(InteractionContextType.Guild, InteractionContextType.BotDm, InteractionContextType.PrivateChannel);
-
         try
         {
             if (TestGuildId != 0)
@@ -355,9 +373,7 @@ class Program
 
                 await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
                 {
-                    rollCommand.Build(),
-                    fixCommand.Build(),
-                    fixMessageCommand.Build()
+                    rollCommand.Build()
                 });
 
                 Console.WriteLine($"Registered slash commands in test guild: {guild.Name} ({guild.Id})");
@@ -366,9 +382,7 @@ class Program
             {
                 await _client.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
                 {
-                    rollCommand.Build(),
-                    fixCommand.Build(),
-                    fixMessageCommand.Build()
+                    rollCommand.Build()
                 });
 
                 Console.WriteLine("Registered global slash commands.");
@@ -1039,7 +1053,6 @@ class Program
                 "• Server enable/disable and whitelist settings\n" +
                 "• Slash roll command\n" +
                 "• Public vote command\n" +
-                "• Message context Fix Embed action\n" +
                 "• Public planned updates list\n" +
                 "• Support command for bug reports and feedback\n" +
                 "• Dynamic provider management for bot owners", false)
@@ -1537,12 +1550,6 @@ class Program
                 await HandleRollSlashCommand(command);
                 return;
             }
-
-            if (command.Data.Name == "fix")
-            {
-                await HandleFixSlashCommand(command);
-                return;
-            }
         }
         catch (Exception ex)
         {
@@ -1554,33 +1561,6 @@ class Program
                     await command.RespondAsync("Something went wrong while running that slash command.", ephemeral: true);
                 else
                     await command.FollowupAsync("Something went wrong while running that slash command.", ephemeral: true);
-            }
-            catch
-            {
-            }
-        }
-    }
-
-    private async Task MessageCommandExecuted(SocketMessageCommand command)
-    {
-        try
-        {
-            if (command.Data.Name == "Fix Embed")
-            {
-                await HandleFixMessageCommand(command);
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error handling message command '{command.Data.Name}': {ex}");
-
-            try
-            {
-                if (!command.HasResponded)
-                    await command.RespondAsync("Something went wrong while running that message action.", ephemeral: true);
-                else
-                    await command.FollowupAsync("Something went wrong while running that message action.", ephemeral: true);
             }
             catch
             {
@@ -1710,92 +1690,6 @@ class Program
         };
     }
 
-
-
-    private async Task HandleFixSlashCommand(SocketSlashCommand command)
-    {
-        string inputText = command.Data.Options
-            .FirstOrDefault(x => x.Name == "text")?
-            .Value?
-            .ToString()?
-            .Trim() ?? "";
-
-        if (string.IsNullOrWhiteSpace(inputText))
-        {
-            await command.RespondAsync("Please provide a supported link or a message containing supported links.", ephemeral: true);
-            return;
-        }
-
-        if (!TryBuildFixedContent(inputText, command.User.Id, out string fixedText, out List<string> platforms))
-        {
-            await command.RespondAsync(
-                "I couldn't find a supported Twitter/X, Reddit, TikTok, or Instagram link in that text.",
-                ephemeral: true);
-            return;
-        }
-
-        if (fixedText.Length > 2000)
-        {
-            await command.RespondAsync(
-                "The fixed result is too long to send in one message. Try a shorter message or a single link.",
-                ephemeral: true);
-            return;
-        }
-
-        await command.RespondAsync(fixedText);
-    }
-
-    private async Task HandleFixMessageCommand(SocketMessageCommand command)
-    {
-        SocketMessage targetMessage = command.Data.Message;
-        string inputText = targetMessage.Content?.Trim() ?? "";
-
-        if (string.IsNullOrWhiteSpace(inputText))
-        {
-            await command.RespondAsync(
-                "That message doesn't contain readable text for me to fix.",
-                ephemeral: true);
-            return;
-        }
-
-        if (!TryBuildFixedContent(inputText, command.User.Id, out string fixedText, out List<string> platforms))
-        {
-            await command.RespondAsync(
-                "I couldn't find a supported Twitter/X, Reddit, TikTok, or Instagram link in that message.",
-                ephemeral: true);
-            return;
-        }
-
-        if (fixedText.Length > 2000)
-        {
-            await command.RespondAsync(
-                "The fixed result is too long to send in one message. Try a shorter message or a single link.",
-                ephemeral: true);
-            return;
-        }
-
-        await command.RespondAsync(fixedText);
-    }
-
-    private bool TryBuildFixedContent(string inputText, ulong originalAuthorId, out string fixedText, out List<string> platforms)
-    {
-        fixedText = inputText;
-        platforms = GetPlatformsInText(inputText)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (platforms.Count == 0)
-            return false;
-
-        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(platforms);
-        string replaced = ApplyAllReplacements(inputText, providerIndexes, originalAuthorId);
-
-        if (string.Equals(replaced, inputText, StringComparison.Ordinal))
-            return false;
-
-        fixedText = replaced;
-        return true;
-    }
 
     private bool TryParseDurationInput(string input, out long totalSeconds)
     {
@@ -2234,9 +2128,7 @@ class Program
             "`!ab ignore on` – Ignore your embeds in this server",
             "`!ab ignore off` – Stop ignoring your embeds in this server",
             "`!ab ignore all` – Toggle ignore in all servers",
-            "`/roll` – Roll dice",
-            "`/fix text:<link or message>` – Manually fix supported social links",
-            "`Apps → Fix Embed` – Fix a selected message from the Apps menu"
+            "`/roll` – Roll dice"
         };
 
         if (isAdmin)
@@ -2259,10 +2151,6 @@ class Program
         lines.Add("`/roll dice:1d20 mode:advantage`");
         lines.Add("`/roll dice:1d20+4 mode:disadvantage`");
         lines.Add("`/roll dice:2d6+3`");
-        lines.Add("");
-        lines.Add("**Fix Examples**");
-        lines.Add("`/fix text:https://x.com/...`");
-        lines.Add("`/fix text:check this out https://reddit.com/...`");
 
         return lines;
     }
