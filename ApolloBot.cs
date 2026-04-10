@@ -62,9 +62,12 @@ class Program
     private List<UptimeSession> _uptimeHistory = new();
     private readonly object _statsLock = new();
 
-    // Use your test server ID for fast slash command registration.
-    // Set to 0 to register globally instead.
-    private static readonly ulong TestGuildId = 1486178596765565009;
+    // Set TEST_GUILD_ID for fast guild-only slash command registration during development.
+    // Leave it unset or 0 in production so commands register globally.
+    private static readonly ulong TestGuildId =
+        ulong.TryParse(Environment.GetEnvironmentVariable("TEST_GUILD_ID"), out ulong parsedTestGuildId)
+            ? parsedTestGuildId
+            : 0;
 
     private Dictionary<string, List<string>> _providers = CreateDefaultProviders();
     private readonly HashSet<ulong> _specialTwitterUsers = new();
@@ -352,6 +355,21 @@ class Program
                 .AddChoice("advantage", "advantage")
                 .AddChoice("disadvantage", "disadvantage"));
 
+        var fixCommand = new SlashCommandBuilder()
+            .WithName("fix")
+            .WithDescription("Fix supported social embeds and repost them through ApolloBot.")
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("url")
+                .WithDescription("The supported link or message content to fix")
+                .WithType(ApplicationCommandOptionType.String)
+                .WithRequired(true));
+
+        ApplicationCommandProperties[] commands = new ApplicationCommandProperties[]
+        {
+            rollCommand.Build(),
+            fixCommand.Build()
+        };
+
         try
         {
             if (TestGuildId != 0)
@@ -359,26 +377,17 @@ class Program
                 SocketGuild? guild = _client.GetGuild(TestGuildId);
                 if (guild == null)
                 {
-                    Console.WriteLine($"Test guild {TestGuildId} not found. Slash command was not registered.");
+                    Console.WriteLine($"Test guild {TestGuildId} not found. Slash commands were not registered.");
                     return;
                 }
 
-                await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
-                {
-                    rollCommand.Build()
-                });
-
+                await guild.BulkOverwriteApplicationCommandAsync(commands);
                 Console.WriteLine($"Registered slash commands in test guild: {guild.Name} ({guild.Id})");
+                return;
             }
-            else
-            {
-                await _client.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
-                {
-                    rollCommand.Build()
-                });
 
-                Console.WriteLine("Registered global slash commands.");
-            }
+            await _client.BulkOverwriteGlobalApplicationCommandsAsync(commands);
+            Console.WriteLine("Registered global slash commands.");
         }
         catch (Exception ex)
         {
@@ -730,6 +739,12 @@ class Program
 
         if (sub == "topservers")
         {
+            if (parts.Length >= 4 && parts[2].Equals("remove", StringComparison.OrdinalIgnoreCase))
+            {
+                await RemoveServerFromTopServersAsync(textChannel, parts);
+                return;
+            }
+
             await SendTopServersByUsageAsync(textChannel);
             return;
         }
@@ -1537,10 +1552,20 @@ class Program
     {
         try
         {
-            if (command.Data.Name == "roll")
+            switch (command.Data.Name)
             {
-                await HandleRollSlashCommand(command);
-                return;
+                case "roll":
+                    await HandleRollSlashCommand(command);
+                    return;
+
+                case "fix":
+                    await HandleFixSlashCommand(command);
+                    return;
+
+                default:
+                    if (!command.HasResponded)
+                        await command.RespondAsync("That slash command is not configured on this build yet.", ephemeral: true);
+                    return;
             }
         }
         catch (Exception ex)
@@ -1558,6 +1583,101 @@ class Program
             {
             }
         }
+    }
+
+    private async Task HandleFixSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel textChannel)
+        {
+            await command.RespondAsync("The /fix command can only be used in a server text channel.", ephemeral: true);
+            return;
+        }
+
+        string rawText = command.Data.Options
+            .FirstOrDefault(x => x.Name == "url")?.Value?.ToString()?.Trim()
+            ?? "";
+
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            await command.RespondAsync("Please provide a supported link to fix.", ephemeral: true);
+            return;
+        }
+
+        if (!ShouldProcessMessageInChannel(textChannel))
+        {
+            await command.RespondAsync(
+                "ApolloBot is disabled in this channel right now. Ask an admin to use `!embedfix on` or whitelist this channel.",
+                ephemeral: true);
+            return;
+        }
+
+        List<string> detectedPlatforms = GetPlatformsInText(rawText);
+        if (detectedPlatforms.Count == 0)
+        {
+            await command.RespondAsync(
+                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram.",
+                ephemeral: true);
+            return;
+        }
+
+        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms);
+        string newContent = ApplyAllReplacements(rawText, providerIndexes, command.User.Id);
+
+        if (newContent == rawText)
+        {
+            await command.RespondAsync("I found the link, but nothing needed changing.", ephemeral: true);
+            return;
+        }
+
+        List<string> missing = GetLikelyMissingPermissions(textChannel);
+        if (missing.Count > 0)
+        {
+            Console.WriteLine(
+                $"[PRECHECK] Slash /fix may be missing permissions in guild '{textChannel.Guild.Name}' channel '#{textChannel.Name}': {string.Join(", ", missing)}");
+        }
+
+        await command.DeferAsync(ephemeral: true);
+
+        RestWebhook? webhook = await GetOrCreateWebhookAsync(textChannel);
+        if (webhook == null)
+        {
+            await command.FollowupAsync("I couldn't create or access the relay webhook in this channel.", ephemeral: true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(webhook.Token))
+        {
+            await command.FollowupAsync("The relay webhook exists, but its token is missing.", ephemeral: true);
+            return;
+        }
+
+        string displayName = command.User.GlobalName ?? command.User.Username;
+        string avatarUrl = command.User.GetAvatarUrl(ImageFormat.Auto, 128)
+                           ?? command.User.GetDefaultAvatarUrl();
+
+        var webhookClient = new DiscordWebhookClient(webhook.Id, webhook.Token);
+
+        ulong relayedMessageId = await webhookClient.SendMessageAsync(
+            text: newContent,
+            username: displayName,
+            avatarUrl: avatarUrl,
+            components: BuildButtons(detectedPlatforms));
+
+        _relayStates[relayedMessageId] = new RelayMessageState
+        {
+            OriginalContent = rawText,
+            WebhookId = webhook.Id,
+            WebhookToken = webhook.Token,
+            OriginalAuthorId = command.User.Id,
+            Platforms = detectedPlatforms,
+            ProviderIndexes = providerIndexes
+        };
+
+        SaveRelayStates();
+        IncrementEmbedsFixedCount();
+        RecordGuildEmbedFix(textChannel.Guild);
+
+        await command.FollowupAsync("Done — I posted the fixed embed version in this channel.", ephemeral: true);
     }
 
     private async Task HandleRollSlashCommand(SocketSlashCommand command)
@@ -2093,6 +2213,7 @@ class Program
             "`!bot servercount` – Show total connected servers",
             "`!bot servers` – List connected servers with pagination",
             "`!bot topservers` – Show most-used servers by embed fixes",
+            "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
             "`!bot serverstats <serverId>` – Show detailed stats for one server",
             "`!bot setembeds <number>` – Manually set the embeds fixed count",
             "`!bot setservicetime <duration>` – Manually set total service time",
@@ -2200,6 +2321,30 @@ class Program
         stats.LastUpdatedAtUtc = DateTime.UtcNow;
 
         SaveGuildUsageStats();
+    }
+
+    private async Task RemoveServerFromTopServersAsync(SocketTextChannel channel, string[] parts)
+    {
+        if (parts.Length < 4 || !ulong.TryParse(parts[3], out ulong guildId))
+        {
+            await channel.SendMessageAsync("Usage: `!bot topservers remove <serverId>`");
+            return;
+        }
+
+        bool removedUsage = _guildUsageStats.Remove(guildId);
+        bool removedActivity = _guildActivity.Remove(guildId);
+
+        SaveGuildUsageStats();
+        SaveGuildActivityState();
+
+        if (!removedUsage && !removedActivity)
+        {
+            await channel.SendMessageAsync("That server ID was not found in tracked analytics.");
+            return;
+        }
+
+        string extra = removedActivity ? " and guild activity history" : "";
+        await channel.SendMessageAsync($"✅ Removed server `{guildId}` from tracked analytics{extra}.");
     }
 
     private async Task SendTopServersByUsageAsync(SocketTextChannel channel)
