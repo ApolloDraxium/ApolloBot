@@ -170,6 +170,7 @@ class Program
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
+        _client.MessageCommandExecuted += MessageCommandExecuted;
 
         string? token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
 
@@ -328,11 +329,18 @@ class Program
         var fixCommand = new SlashCommandBuilder()
             .WithName("fix")
             .WithDescription("Fix supported social links for embeds.")
+            .WithIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
+            .WithContextTypes(InteractionContextType.Guild, InteractionContextType.BotDm, InteractionContextType.PrivateChannel)
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("text")
                 .WithDescription("A supported link or a message containing supported links")
                 .WithType(ApplicationCommandOptionType.String)
                 .WithRequired(true));
+
+        var fixMessageCommand = new MessageCommandBuilder()
+            .WithName("Fix Embed")
+            .WithIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
+            .WithContextTypes(InteractionContextType.Guild, InteractionContextType.BotDm, InteractionContextType.PrivateChannel);
 
         try
         {
@@ -348,7 +356,8 @@ class Program
                 await guild.BulkOverwriteApplicationCommandAsync(new ApplicationCommandProperties[]
                 {
                     rollCommand.Build(),
-                    fixCommand.Build()
+                    fixCommand.Build(),
+                    fixMessageCommand.Build()
                 });
 
                 Console.WriteLine($"Registered slash commands in test guild: {guild.Name} ({guild.Id})");
@@ -358,7 +367,8 @@ class Program
                 await _client.BulkOverwriteGlobalApplicationCommandsAsync(new ApplicationCommandProperties[]
                 {
                     rollCommand.Build(),
-                    fixCommand.Build()
+                    fixCommand.Build(),
+                    fixMessageCommand.Build()
                 });
 
                 Console.WriteLine("Registered global slash commands.");
@@ -1029,6 +1039,7 @@ class Program
                 "• Server enable/disable and whitelist settings\n" +
                 "• Slash roll command\n" +
                 "• Public vote command\n" +
+                "• Message context Fix Embed action\n" +
                 "• Public planned updates list\n" +
                 "• Support command for bug reports and feedback\n" +
                 "• Dynamic provider management for bot owners", false)
@@ -1550,6 +1561,33 @@ class Program
         }
     }
 
+    private async Task MessageCommandExecuted(SocketMessageCommand command)
+    {
+        try
+        {
+            if (command.Data.Name == "Fix Embed")
+            {
+                await HandleFixMessageCommand(command);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error handling message command '{command.Data.Name}': {ex}");
+
+            try
+            {
+                if (!command.HasResponded)
+                    await command.RespondAsync("Something went wrong while running that message action.", ephemeral: true);
+                else
+                    await command.FollowupAsync("Something went wrong while running that message action.", ephemeral: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
     private async Task HandleRollSlashCommand(SocketSlashCommand command)
     {
         string diceText = "1d20";
@@ -1692,6 +1730,38 @@ class Program
         {
             await command.RespondAsync(
                 "I couldn't find a supported Twitter/X, Reddit, TikTok, or Instagram link in that text.",
+                ephemeral: true);
+            return;
+        }
+
+        if (fixedText.Length > 2000)
+        {
+            await command.RespondAsync(
+                "The fixed result is too long to send in one message. Try a shorter message or a single link.",
+                ephemeral: true);
+            return;
+        }
+
+        await command.RespondAsync(fixedText);
+    }
+
+    private async Task HandleFixMessageCommand(SocketMessageCommand command)
+    {
+        SocketMessage targetMessage = command.Data.Message;
+        string inputText = targetMessage.Content?.Trim() ?? "";
+
+        if (string.IsNullOrWhiteSpace(inputText))
+        {
+            await command.RespondAsync(
+                "That message doesn't contain readable text for me to fix.",
+                ephemeral: true);
+            return;
+        }
+
+        if (!TryBuildFixedContent(inputText, command.User.Id, out string fixedText, out List<string> platforms))
+        {
+            await command.RespondAsync(
+                "I couldn't find a supported Twitter/X, Reddit, TikTok, or Instagram link in that message.",
                 ephemeral: true);
             return;
         }
@@ -2165,7 +2235,8 @@ class Program
             "`!ab ignore off` – Stop ignoring your embeds in this server",
             "`!ab ignore all` – Toggle ignore in all servers",
             "`/roll` – Roll dice",
-            "`/fix text:<link or message>` – Manually fix supported social links"
+            "`/fix text:<link or message>` – Manually fix supported social links",
+            "`Apps → Fix Embed` – Fix a selected message from the Apps menu"
         };
 
         if (isAdmin)
