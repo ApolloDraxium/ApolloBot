@@ -372,22 +372,31 @@ class Program
 
         try
         {
+            Console.WriteLine("[SLASH] Forcing global slash command registration for DM compatibility.");
+
             if (TestGuildId != 0)
             {
                 SocketGuild? guild = _client.GetGuild(TestGuildId);
-                if (guild == null)
+                if (guild != null)
                 {
-                    Console.WriteLine($"Test guild {TestGuildId} not found. Slash commands were not registered.");
-                    return;
+                    Console.WriteLine($"[SLASH] Clearing stale guild slash commands from test guild: {guild.Name} ({guild.Id})");
+                    await guild.BulkOverwriteApplicationCommandAsync(Array.Empty<ApplicationCommandProperties>());
                 }
-
-                await guild.BulkOverwriteApplicationCommandAsync(commands);
-                Console.WriteLine($"Registered slash commands in test guild: {guild.Name} ({guild.Id})");
-                return;
+                else
+                {
+                    Console.WriteLine($"[SLASH] TEST_GUILD_ID was set to {TestGuildId}, but that guild was not found. Continuing with global registration anyway.");
+                }
             }
 
+            Console.WriteLine("[SLASH] Clearing existing global slash commands so Discord refreshes command metadata and contexts.");
+            await _client.BulkOverwriteGlobalApplicationCommandsAsync(Array.Empty<ApplicationCommandProperties>());
+
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
             await _client.BulkOverwriteGlobalApplicationCommandsAsync(commands);
-            Console.WriteLine("Registered global slash commands.");
+
+            Console.WriteLine("[SLASH] Registered global slash commands: /roll, /fix");
+            Console.WriteLine("[SLASH] Global commands should now be eligible for DM visibility, subject to Discord install/context propagation.");
         }
         catch (Exception ex)
         {
