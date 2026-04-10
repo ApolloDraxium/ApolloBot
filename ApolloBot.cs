@@ -1587,12 +1587,6 @@ class Program
 
     private async Task HandleFixSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel textChannel)
-        {
-            await command.RespondAsync("The /fix command can only be used in a server text channel.", ephemeral: true);
-            return;
-        }
-
         string rawText = command.Data.Options
             .FirstOrDefault(x => x.Name == "url")?.Value?.ToString()?.Trim()
             ?? "";
@@ -1600,14 +1594,6 @@ class Program
         if (string.IsNullOrWhiteSpace(rawText))
         {
             await command.RespondAsync("Please provide a supported link to fix.", ephemeral: true);
-            return;
-        }
-
-        if (!ShouldProcessMessageInChannel(textChannel))
-        {
-            await command.RespondAsync(
-                "ApolloBot is disabled in this channel right now. Ask an admin to use `!embedfix on` or whitelist this channel.",
-                ephemeral: true);
             return;
         }
 
@@ -1629,6 +1615,22 @@ class Program
             return;
         }
 
+        if (command.Channel is not SocketTextChannel textChannel)
+        {
+            await command.RespondAsync(
+                $"Here you go — here's the fixed version:\n{newContent}",
+                ephemeral: true);
+            return;
+        }
+
+        if (!ShouldProcessMessageInChannel(textChannel))
+        {
+            await command.RespondAsync(
+                "ApolloBot is disabled in this channel right now. Ask an admin to use `!embedfix on` or whitelist this channel.",
+                ephemeral: true);
+            return;
+        }
+
         List<string> missing = GetLikelyMissingPermissions(textChannel);
         if (missing.Count > 0)
         {
@@ -1641,13 +1643,17 @@ class Program
         RestWebhook? webhook = await GetOrCreateWebhookAsync(textChannel);
         if (webhook == null)
         {
-            await command.FollowupAsync("I couldn't create or access the relay webhook in this channel.", ephemeral: true);
+            await command.FollowupAsync(
+                $"I couldn't create or access the relay webhook in this channel, so here's the fixed version instead:\n{newContent}",
+                ephemeral: true);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(webhook.Token))
         {
-            await command.FollowupAsync("The relay webhook exists, but its token is missing.", ephemeral: true);
+            await command.FollowupAsync(
+                $"The relay webhook exists, but its token is missing. Here's the fixed version instead:\n{newContent}",
+                ephemeral: true);
             return;
         }
 
