@@ -288,24 +288,16 @@ class Program
 
             var embed = new EmbedBuilder()
                 .WithTitle("Hey! I'm ApolloBot 👋")
-                .WithDescription(
-                    "I fix embeds for:
-" +
-                    "Twitter / Reddit / TikTok / Instagram
-
-" +
-                    "**Use:**
-" +
-                    "`!embedfix on` *(To ensure I am fixing embeds)*
-" +
-                    "`!ab perms` *(To ensure I have the right permissions per channel)*
-" +
-                    "`!support` *(For bug reports, help, and feedback)*
-
-" +
-                    "**Optional:**
-" +
-                    "`!ab help` *(For additional commands)*")
+.WithDescription(
+    "I fix embeds for:\n" +
+    "Twitter / Reddit / TikTok / Instagram\n\n" +
+    "**Use:**\n" +
+    "`!embedfix on` *(To ensure I am fixing embeds)*\n" +
+    "`!ab perms` *(To ensure I have the right permissions per channel)*\n" +
+    "`!support` *(For bug reports, help, and feedback)*\n\n" +
+    "**Optional:**\n" +
+    "`!ab help` *(For additional commands)*"
+)
                 .WithColor(Color.Red)
                 .Build();
 
