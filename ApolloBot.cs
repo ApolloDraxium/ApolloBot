@@ -170,6 +170,8 @@ class Program
         _client.Ready += OnReady;
         _client.JoinedGuild += OnJoinedGuild;
         _client.LeftGuild += OnLeftGuild;
+        _client.Disconnected += OnDisconnected;
+        _client.Resumed += OnResumed;
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
@@ -1590,41 +1592,49 @@ class Program
         Console.WriteLine("===========================================");
     }
 
-    private async Task SlashCommandExecuted(SocketSlashCommand command)
+    private Task SlashCommandExecuted(SocketSlashCommand command)
     {
-        try
+        _ = Task.Run(async () =>
         {
-            switch (command.Data.Name)
-            {
-                case "roll":
-                    await HandleRollSlashCommand(command);
-                    return;
-
-                case "fix":
-                    await HandleFixSlashCommand(command);
-                    return;
-
-                default:
-                    if (!command.HasResponded)
-                        await command.RespondAsync("That slash command is not configured on this build yet.", ephemeral: true);
-                    return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error handling slash command '{command.Data.Name}': {ex}");
-
             try
             {
-                if (!command.HasResponded)
-                    await command.RespondAsync("Something went wrong while running that slash command.", ephemeral: true);
-                else
-                    await command.FollowupAsync("Something went wrong while running that slash command.", ephemeral: true);
+                switch (command.Data.Name)
+                {
+                    case "roll":
+                        await HandleRollSlashCommand(command);
+                        break;
+
+                    case "fix":
+                        await HandleFixSlashCommand(command);
+                        break;
+
+                    default:
+                        await SafeRespondToSlashCommandAsync(
+                            command,
+                            "That slash command is not configured on this build yet.",
+                            ephemeral: true);
+                        break;
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"Error handling slash command '{command.Data.Name}': {ex}");
+
+                try
+                {
+                    await SafeRespondToSlashCommandAsync(
+                        command,
+                        "Something went wrong while running that slash command.",
+                        ephemeral: true);
+                }
+                catch (Exception followupEx)
+                {
+                    Console.WriteLine($"Failed to send slash command error response for '{command.Data.Name}': {followupEx}");
+                }
             }
-        }
+        });
+
+        return Task.CompletedTask;
     }
 
     private async Task HandleFixSlashCommand(SocketSlashCommand command)
@@ -1635,14 +1645,15 @@ class Program
 
         if (string.IsNullOrWhiteSpace(rawText))
         {
-            await command.RespondAsync("Please provide a supported link to fix.", ephemeral: true);
+            await SafeRespondToSlashCommandAsync(command, "Please provide a supported link to fix.", ephemeral: true);
             return;
         }
 
         List<string> detectedPlatforms = GetPlatformsInText(rawText);
         if (detectedPlatforms.Count == 0)
         {
-            await command.RespondAsync(
+            await SafeRespondToSlashCommandAsync(
+                command,
                 "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Bluesky, Threads (experimental).",
                 ephemeral: true);
             return;
@@ -1653,13 +1664,14 @@ class Program
 
         if (newContent == rawText)
         {
-            await command.RespondAsync("I found the link, but nothing needed changing.", ephemeral: true);
+            await SafeRespondToSlashCommandAsync(command, "I found the link, but nothing needed changing.", ephemeral: true);
             return;
         }
 
         if (command.Channel is not SocketTextChannel textChannel)
         {
-            await command.RespondAsync(
+            await SafeRespondToSlashCommandAsync(
+                command,
                 $"Here you go — here's the fixed version:\n{newContent}",
                 ephemeral: true);
             return;
@@ -1667,7 +1679,8 @@ class Program
 
         if (!ShouldProcessMessageInChannel(textChannel))
         {
-            await command.RespondAsync(
+            await SafeRespondToSlashCommandAsync(
+                command,
                 "ApolloBot is disabled in this channel right now. Ask an admin to use `!embedfix on` or whitelist this channel.",
                 ephemeral: true);
             return;
@@ -1680,12 +1693,11 @@ class Program
                 $"[PRECHECK] Slash /fix may be missing permissions in guild '{textChannel.Guild.Name}' channel '#{textChannel.Name}': {string.Join(", ", missing)}");
         }
 
-        await command.DeferAsync(ephemeral: true);
-
         RestWebhook? webhook = await GetOrCreateWebhookAsync(textChannel);
         if (webhook == null)
         {
-            await command.FollowupAsync(
+            await SafeRespondToSlashCommandAsync(
+                command,
                 $"I couldn't create or access the relay webhook in this channel, so here's the fixed version instead:\n{newContent}",
                 ephemeral: true);
             return;
@@ -1693,7 +1705,8 @@ class Program
 
         if (string.IsNullOrWhiteSpace(webhook.Token))
         {
-            await command.FollowupAsync(
+            await SafeRespondToSlashCommandAsync(
+                command,
                 $"The relay webhook exists, but its token is missing. Here's the fixed version instead:\n{newContent}",
                 ephemeral: true);
             return;
@@ -1726,7 +1739,33 @@ class Program
         IncrementEmbedsFixedCount();
         RecordGuildEmbedFix(textChannel.Guild);
 
-        await command.FollowupAsync("Done — I posted the fixed embed version in this channel.", ephemeral: true);
+        await SafeRespondToSlashCommandAsync(
+            command,
+            "Done — I posted the fixed embed version in this channel.",
+            ephemeral: true);
+    }
+
+    private async Task SafeRespondToSlashCommandAsync(SocketSlashCommand command, string text, bool ephemeral = true)
+    {
+        if (!command.HasResponded)
+        {
+            await command.RespondAsync(text, ephemeral: ephemeral);
+            return;
+        }
+
+        await command.FollowupAsync(text, ephemeral: ephemeral);
+    }
+
+    private Task OnDisconnected(Exception? ex)
+    {
+        Console.WriteLine($"[GATEWAY] Disconnected: {ex?.ToString() ?? "(no exception)"}");
+        return Task.CompletedTask;
+    }
+
+    private Task OnResumed()
+    {
+        Console.WriteLine("[GATEWAY] Connection resumed.");
+        return Task.CompletedTask;
     }
 
     private async Task HandleRollSlashCommand(SocketSlashCommand command)
