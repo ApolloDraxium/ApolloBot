@@ -2831,7 +2831,7 @@ class Program
             "reddit" => "Fix Embed",
             "tiktok" => "Fix Embed",
             "instagram" => "Fix Embed",
-            "bluesky" => "TFix Embed",
+            "bluesky" => "Fix Embed",
             "threads" => "Fix Embed (Exp)",
             _ => "Fix Embed"
         };
