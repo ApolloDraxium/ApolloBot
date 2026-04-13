@@ -338,9 +338,24 @@ class Program
         if (_client == null)
             return;
 
+        var sharedCommandContexts = new[]
+        {
+            InteractionContextType.Guild,
+            InteractionContextType.BotDm,
+            InteractionContextType.PrivateChannel
+        };
+
+        var sharedIntegrationTypes = new[]
+        {
+            ApplicationIntegrationType.GuildInstall,
+            ApplicationIntegrationType.UserInstall
+        };
+
         var rollCommand = new SlashCommandBuilder()
             .WithName("roll")
             .WithDescription("Roll dice for D&D or other tabletop chaos.")
+            .WithContextTypes(sharedCommandContexts)
+            .WithIntegrationTypes(sharedIntegrationTypes)
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("dice")
                 .WithDescription("Dice formula, e.g. 1d20, 1d20+6, 2d6+3")
@@ -358,6 +373,8 @@ class Program
         var fixCommand = new SlashCommandBuilder()
             .WithName("fix")
             .WithDescription("Fix supported social embeds and repost them through ApolloBot.")
+            .WithContextTypes(sharedCommandContexts)
+            .WithIntegrationTypes(sharedIntegrationTypes)
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("url")
                 .WithDescription("The supported link or message content to fix")
@@ -389,13 +406,10 @@ class Program
             }
 
             Console.WriteLine("[SLASH] Clearing existing global slash commands so Discord refreshes command metadata and contexts.");
-            await _client.BulkOverwriteGlobalApplicationCommandsAsync(Array.Empty<ApplicationCommandProperties>());
-
-            await Task.Delay(TimeSpan.FromSeconds(2));
-
             await _client.BulkOverwriteGlobalApplicationCommandsAsync(commands);
 
             Console.WriteLine("[SLASH] Registered global slash commands: /roll, /fix");
+            Console.WriteLine("[SLASH] Commands were registered with Guild + User install support and Guild/Bot DM/Private Channel contexts.");
             Console.WriteLine("[SLASH] Global commands should now be eligible for DM visibility, subject to Discord install/context propagation.");
         }
         catch (Exception ex)
