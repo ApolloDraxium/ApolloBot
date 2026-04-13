@@ -1674,8 +1674,8 @@ class Program
         if (command.Channel is not SocketTextChannel textChannel)
         {
             await command.RespondAsync(
-                $"Here you go — here's the fixed version:\n{newContent}",
-                ephemeral: true);
+                $"Here you go here's the fixed version:\n{newContent}",
+                ephemeral: false);
             return;
         }
 
@@ -1740,7 +1740,7 @@ class Program
         IncrementEmbedsFixedCount();
         RecordGuildEmbedFix(textChannel.Guild);
 
-        await command.FollowupAsync("Done — I posted the fixed embed version in this channel.", ephemeral: true);
+        await command.FollowupAsync("Done! I posted the fixed embed version in this channel.", ephemeral: true);
     }
 
     private async Task HandleRollSlashCommand(SocketSlashCommand command)
