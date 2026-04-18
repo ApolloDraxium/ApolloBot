@@ -1630,10 +1630,14 @@ class Program
 
             try
             {
+                string responseText = command.Channel is SocketTextChannel textChannel && IsMissingPermissionsError(ex)
+                    ? BuildSlashPermissionFailureMessage(command, textChannel)
+                    : "Something went wrong while running that slash command.";
+
                 if (!command.HasResponded)
-                    await command.RespondAsync("Something went wrong while running that slash command.", ephemeral: true);
+                    await command.RespondAsync(responseText, ephemeral: true);
                 else
-                    await command.FollowupAsync("Something went wrong while running that slash command.", ephemeral: true);
+                    await command.FollowupAsync(responseText, ephemeral: true);
             }
             catch
             {
@@ -2813,6 +2817,25 @@ class Program
         LogBotChannelPermissions(channel, actionName);
         Console.WriteLine("***************************************");
     }
+
+    private string BuildSlashPermissionFailureMessage(SocketSlashCommand command, SocketTextChannel channel)
+    {
+        List<string> missing = GetLikelyMissingPermissions(channel);
+        string missingText = missing.Count == 0
+            ? "I hit Discord's **Missing Permissions (50013)** error in this channel, but I couldn't pinpoint the exact missing permission from the live snapshot. This is often caused by a channel deny override, webhook restriction, or another permission mismatch."
+            : $"I couldn't complete `/{command.Data.Name}` in this channel because I'm missing: **{string.Join(", ", missing)}**.";
+
+        string guidance = command.Data.Name == "fix"
+            ? "For `/fix`, the most important ones are usually **View Channel**, **Send Messages**, **Embed Links**, **Read Message History**, and **Manage Webhooks**."
+            : $"Please make sure I have the permissions needed for `/{command.Data.Name}` in this channel.";
+
+        return missingText + "
+" +
+               guidance + "
+" +
+               "An admin can also run `!ab perms` here to see my permission report.";
+    }
+
 
     private MessageComponent BuildButtons(List<string> platforms, bool silentMode = false)
     {
