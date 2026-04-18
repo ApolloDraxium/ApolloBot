@@ -2829,10 +2829,8 @@ class Program
             ? "For `/fix`, the most important ones are usually **View Channel**, **Send Messages**, **Embed Links**, **Read Message History**, and **Manage Webhooks**."
             : $"Please make sure I have the permissions needed for `/{command.Data.Name}` in this channel.";
 
-        return missingText + "
-" +
-               guidance + "
-" +
+        return missingText + "\n" +
+               guidance + "\n" +
                "An admin can also run `!ab perms` here to see my permission report.";
     }
 
