@@ -520,9 +520,7 @@ class Program
                 return;
             }
 
-            string displayName = message.Author.GlobalName ?? message.Author.Username;
-            string avatarUrl = message.Author.GetAvatarUrl(ImageFormat.Auto, 128)
-                               ?? message.Author.GetDefaultAvatarUrl();
+            (string displayName, string avatarUrl) = GetRelayIdentity(message.Author, textChannel.Guild);
 
             var webhookClient = new DiscordWebhookClient(webhook.Id, webhook.Token);
 
@@ -825,6 +823,45 @@ class Program
             pageSize: DefaultPageSize,
             color: Color.DarkPurple,
             headerText: "Owner-only controls and maintenance commands.");
+    }
+
+    private (string DisplayName, string AvatarUrl) GetRelayIdentity(IUser user, SocketGuild? guild = null)
+    {
+        SocketGuildUser? guildUser = user as SocketGuildUser;
+
+        if (guildUser == null && guild != null)
+            guildUser = guild.GetUser(user.Id);
+
+        string displayName;
+        string avatarUrl;
+
+        if (guildUser != null)
+        {
+            displayName = guildUser.Nickname
+                ?? guildUser.DisplayName
+                ?? guildUser.GlobalName
+                ?? guildUser.Username;
+
+            avatarUrl = guildUser.GetGuildAvatarUrl(ImageFormat.Auto, 256)
+                ?? guildUser.GetAvatarUrl(ImageFormat.Auto, 256)
+                ?? guildUser.GetDefaultAvatarUrl();
+        }
+        else
+        {
+            displayName = user.GlobalName ?? user.Username;
+            avatarUrl = user.GetAvatarUrl(ImageFormat.Auto, 256)
+                ?? user.GetDefaultAvatarUrl();
+        }
+
+        displayName = Regex.Replace(displayName ?? user.Username, @"\s+", " ").Trim();
+
+        if (displayName.Length > 32)
+            displayName = displayName.Substring(0, 32);
+
+        if (string.IsNullOrWhiteSpace(displayName))
+            displayName = user.Username;
+
+        return (displayName, avatarUrl);
     }
 
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
@@ -1933,9 +1970,7 @@ class Program
             return;
         }
 
-        string displayName = command.User.GlobalName ?? command.User.Username;
-        string avatarUrl = command.User.GetAvatarUrl(ImageFormat.Auto, 128)
-                           ?? command.User.GetDefaultAvatarUrl();
+        (string displayName, string avatarUrl) = GetRelayIdentity(command.User, textChannel.Guild);
 
         var webhookClient = new DiscordWebhookClient(webhook.Id, webhook.Token);
 
