@@ -133,7 +133,6 @@ class Program
         846147700700610600
     };
 
-    private static readonly TimeSpan ButtonCooldown = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
 
     static Task Main(string[] args)
@@ -527,11 +526,13 @@ class Program
 
             var webhookClient = new DiscordWebhookClient(webhook.Id, webhook.Token);
 
+            MessageComponent buttons = BuildButtonsForGuild(textChannel.Guild.Id, detectedPlatforms, settings.SilentMode);
+
             ulong relayedMessageId = await webhookClient.SendMessageAsync(
                 text: newContent,
                 username: displayName,
                 avatarUrl: avatarUrl,
-                components: BuildButtons(detectedPlatforms, settings.SilentMode)
+                components: buttons
             );
 
             _relayStates[relayedMessageId] = new RelayMessageState
@@ -541,13 +542,14 @@ class Program
                 WebhookToken = webhook.Token,
                 OriginalAuthorId = message.Author.Id,
                 SilentMode = settings.SilentMode,
+                GuildId = textChannel.Guild.Id,
                 Platforms = detectedPlatforms,
                 ProviderIndexes = providerIndexes
             };
 
             SaveRelayStates();
             IncrementEmbedsFixedCount();
-            RecordGuildEmbedFix(textChannel.Guild);
+            RecordGuildEmbedFix(textChannel.Guild, detectedPlatforms);
 
             await message.DeleteAsync();
         }
@@ -909,6 +911,12 @@ class Program
             return;
         }
 
+        if (sub == "info")
+        {
+            await HandleInfoCommand(textChannel, parts);
+            return;
+        }
+
         if (sub == "ignore")
         {
             await HandleIgnoreCommand(message, textChannel, parts);
@@ -918,6 +926,12 @@ class Program
         if (sub == "update" && IsBotOwner(message.Author))
         {
             await HandlePlannedUpdateOwnerCommand(textChannel, new[] { "bot", "update" }.Concat(parts.Skip(1)).ToArray());
+            return;
+        }
+
+        if (sub == "usage")
+        {
+            await SendGuildUsageBreakdownAsync(textChannel);
             return;
         }
 
@@ -970,6 +984,24 @@ class Program
             }
 
             await textChannel.SendMessageAsync("Usage: `!ab silent on` or `!ab silent off`");
+            return;
+        }
+
+        if (sub == "togglebuttons")
+        {
+            await HandleToggleButtonsCommand(textChannel, settings, parts);
+            return;
+        }
+
+        if (sub == "cooldown")
+        {
+            await HandleCooldownCommand(textChannel, settings, parts);
+            return;
+        }
+
+        if (sub == "reset")
+        {
+            await HandleResetCommand(textChannel, settings, parts);
             return;
         }
 
@@ -1081,6 +1113,187 @@ class Program
             "`!ab ignore all`\n" +
             "`!ab ignore all on`\n" +
             "`!ab ignore all off`");
+    }
+
+    private async Task HandleToggleButtonsCommand(SocketTextChannel textChannel, GuildSettings settings, string[] parts)
+    {
+        if (parts.Length < 2)
+        {
+            string currentState = settings.ButtonsEnabled ? "enabled" : "disabled";
+            await textChannel.SendMessageAsync(
+                $"Relay buttons are currently **{currentState}** in this server. Usage: `!ab togglebuttons <on/off>`");
+            return;
+        }
+
+        string mode = parts[1].ToLowerInvariant();
+
+        if (mode == "on")
+        {
+            settings.ButtonsEnabled = true;
+            SaveGuildSettings();
+            await textChannel.SendMessageAsync("✅ Relay buttons are now **enabled** for this server.");
+            return;
+        }
+
+        if (mode == "off")
+        {
+            settings.ButtonsEnabled = false;
+            SaveGuildSettings();
+            await textChannel.SendMessageAsync("✅ Relay buttons are now **disabled** for this server.");
+            return;
+        }
+
+        await textChannel.SendMessageAsync("Usage: `!ab togglebuttons <on/off>`");
+    }
+
+    private async Task HandleCooldownCommand(SocketTextChannel textChannel, GuildSettings settings, string[] parts)
+    {
+        if (parts.Length < 2)
+        {
+            await textChannel.SendMessageAsync(
+                $"The current relay button cooldown is **{settings.ButtonCooldownSeconds} seconds**. Usage: `!ab cooldown <1-30>`");
+            return;
+        }
+
+        if (!int.TryParse(parts[1], out int seconds) || seconds < 1 || seconds > 30)
+        {
+            await textChannel.SendMessageAsync("Cooldown must be a whole number between **1** and **30** seconds.");
+            return;
+        }
+
+        settings.ButtonCooldownSeconds = seconds;
+        SaveGuildSettings();
+        await textChannel.SendMessageAsync($"⏱️ Relay button cooldown set to **{seconds} seconds**.");
+    }
+
+    private async Task HandleResetCommand(SocketTextChannel textChannel, GuildSettings settings, string[] parts)
+    {
+        if (parts.Length < 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
+        {
+            await textChannel.SendMessageAsync(
+                "This will reset ApolloBot's settings for this server. Run `!ab reset confirm` to continue.");
+            return;
+        }
+
+        settings.Enabled = true;
+        settings.SilentMode = false;
+        settings.ButtonsEnabled = true;
+        settings.ButtonCooldownSeconds = 3;
+        settings.WhitelistedChannelIds.Clear();
+
+        SaveGuildSettings();
+
+        await textChannel.SendMessageAsync(
+            "✅ ApolloBot settings for this server have been reset. Embed fixing is enabled, buttons are on, cooldown is back to 3 seconds, and the whitelist was cleared.");
+    }
+
+    private async Task HandleInfoCommand(SocketTextChannel textChannel, string[] parts)
+    {
+        if (parts.Length < 2)
+        {
+            await textChannel.SendMessageAsync("Usage: `!ab info <message link>`");
+            return;
+        }
+
+        if (!TryExtractMessageIdFromDiscordLink(parts[1], out ulong messageId))
+        {
+            await textChannel.SendMessageAsync("That doesn't look like a valid Discord message link.");
+            return;
+        }
+
+        if (!_relayStates.TryGetValue(messageId, out RelayMessageState? state))
+        {
+            await textChannel.SendMessageAsync("I couldn't find embed info for that message. It may not be one of ApolloBot's relays or the state may have been lost after a restart.");
+            return;
+        }
+
+        string platformText = state.Platforms.Count == 0
+            ? "Unknown"
+            : string.Join(", ", state.Platforms.Select(FormatPlatformName));
+
+        string providerText = FormatRelayProviders(state);
+        string userText = $"<@{state.OriginalAuthorId}>";
+
+        var embed = new EmbedBuilder()
+            .WithTitle("Embed Info")
+            .WithColor(Color.Teal)
+            .AddField("Original User", userText, true)
+            .AddField("Platform(s)", platformText, true)
+            .AddField("Provider(s)", providerText, false)
+            .Build();
+
+        await textChannel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SendGuildUsageBreakdownAsync(SocketTextChannel textChannel)
+    {
+        if (!_guildUsageStats.TryGetValue(textChannel.Guild.Id, out GuildUsageStats? stats) || stats.PlatformUsage.Count == 0)
+        {
+            await textChannel.SendMessageAsync("📊 No usage data has been recorded for this server yet.");
+            return;
+        }
+
+        long total = stats.PlatformUsage.Values.Sum();
+        if (total <= 0)
+        {
+            await textChannel.SendMessageAsync("📊 No usage data has been recorded for this server yet.");
+            return;
+        }
+
+        string lines = string.Join("\n", stats.PlatformUsage
+            .OrderByDescending(x => x.Value)
+            .Select(x =>
+            {
+                double percent = (x.Value / (double)total) * 100;
+                return $"**{FormatPlatformName(x.Key)}:** {percent:F1}% ({x.Value})";
+            }));
+
+        var embed = new EmbedBuilder()
+            .WithTitle($"Usage Breakdown — {textChannel.Guild.Name}")
+            .WithDescription(lines)
+            .WithColor(Color.DarkBlue)
+            .WithFooter($"Total tracked platform hits: {total}")
+            .Build();
+
+        await textChannel.SendMessageAsync(embed: embed);
+    }
+
+    private bool TryExtractMessageIdFromDiscordLink(string input, out ulong messageId)
+    {
+        messageId = 0;
+
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
+
+        string trimmed = input.Trim().Trim('<', '>');
+        Match match = Regex.Match(trimmed, @"https?://(?:canary\.|ptb\.)?discord\.com/channels/\d+/\d+/(\d+)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return false;
+
+        return ulong.TryParse(match.Groups[1].Value, out messageId);
+    }
+
+    private string FormatRelayProviders(RelayMessageState state)
+    {
+        if (state.Platforms.Count == 0)
+            return "Unknown";
+
+        var parts = new List<string>();
+
+        foreach (string platform in state.Platforms.Distinct())
+        {
+            if (!_providers.TryGetValue(platform, out List<string>? providers) || providers.Count == 0)
+            {
+                parts.Add($"{FormatPlatformName(platform)}: unknown");
+                continue;
+            }
+
+            int index = state.ProviderIndexes.TryGetValue(platform, out int providerIndex) ? providerIndex : 0;
+            index = Math.Clamp(index, 0, providers.Count - 1);
+            parts.Add($"{FormatPlatformName(platform)}: {providers[index]}");
+        }
+
+        return string.Join("\n", parts);
     }
 
     private async Task SendApolloBotHelp(SocketTextChannel channel, SocketUser user)
@@ -1541,6 +1754,9 @@ class Program
             .WithTitle("ApolloBot Settings")
             .WithDescription($"Settings for **{channel.Guild.Name}**")
             .AddField("Status", enabledText, true)
+            .AddField("Silent Mode", settings.SilentMode ? "Enabled" : "Disabled", true)
+            .AddField("Relay Buttons", settings.ButtonsEnabled ? "Enabled" : "Disabled", true)
+            .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} seconds", true)
             .AddField("Allowed Channels", whitelistText, false)
             .WithColor(settings.Enabled ? Color.Green : Color.Red)
             .WithCurrentTimestamp()
@@ -1723,11 +1939,13 @@ class Program
 
         var webhookClient = new DiscordWebhookClient(webhook.Id, webhook.Token);
 
+        MessageComponent buttons = BuildButtonsForGuild(textChannel.Guild.Id, detectedPlatforms, false);
+
         ulong relayedMessageId = await webhookClient.SendMessageAsync(
             text: newContent,
             username: displayName,
             avatarUrl: avatarUrl,
-            components: BuildButtons(detectedPlatforms, false));
+            components: buttons);
 
         _relayStates[relayedMessageId] = new RelayMessageState
         {
@@ -1736,13 +1954,14 @@ class Program
             WebhookToken = webhook.Token,
             OriginalAuthorId = command.User.Id,
             SilentMode = false,
+            GuildId = textChannel.Guild.Id,
             Platforms = detectedPlatforms,
             ProviderIndexes = providerIndexes
         };
 
         SaveRelayStates();
         IncrementEmbedsFixedCount();
-        RecordGuildEmbedFix(textChannel.Guild);
+        RecordGuildEmbedFix(textChannel.Guild, detectedPlatforms);
 
         await command.FollowupAsync("Done! I posted the fixed embed version in this channel.", ephemeral: true);
     }
@@ -1987,15 +2206,33 @@ class Program
             return;
         }
 
+        if (state.GuildId == 0 && component.Channel is SocketGuildChannel relayChannel)
+        {
+            state.GuildId = relayChannel.Guild.Id;
+            _relayStates[component.Message.Id] = state;
+            SaveRelayStates();
+        }
+
+        GuildSettings stateSettings = GetOrCreateGuildSettings(state.GuildId);
+
+        if (!stateSettings.ButtonsEnabled)
+        {
+            await component.RespondAsync(
+                "Relay buttons are disabled in this server right now.",
+                ephemeral: true);
+            return;
+        }
+
+        TimeSpan buttonCooldown = TimeSpan.FromSeconds(Math.Clamp(stateSettings.ButtonCooldownSeconds, 1, 30));
         (ulong MessageId, ulong UserId) cooldownKey = (component.Message.Id, component.User.Id);
 
         if (_cooldowns.TryGetValue(cooldownKey, out DateTime lastUsed))
         {
             TimeSpan elapsed = DateTime.UtcNow - lastUsed;
 
-            if (elapsed < ButtonCooldown)
+            if (elapsed < buttonCooldown)
             {
-                double remaining = (ButtonCooldown - elapsed).TotalSeconds;
+                double remaining = (buttonCooldown - elapsed).TotalSeconds;
                 await component.RespondAsync(
                     $"Slow down a bit 😅 Try again in {remaining:F1}s.",
                     ephemeral: true);
@@ -2070,7 +2307,7 @@ class Program
             await editClient.ModifyMessageAsync(component.Message.Id, props =>
             {
                 props.Content = Optional.Create(newContent);
-                props.Components = Optional.Create(BuildButtons(state.Platforms, state.SilentMode));
+                props.Components = Optional.Create(BuildButtonsForGuild(state.GuildId, state.Platforms, state.SilentMode));
             });
 
             _relayStates[component.Message.Id] = state;
@@ -2304,6 +2541,8 @@ class Program
             "`!ab providers` – Show configured providers",
             "`!ab perms` – Check channel permissions",
             "`!ab status` – Show server settings",
+            "`!ab info <message link>` – Show relay info for an ApolloBot message",
+            "`!ab usage` – Show this server's platform usage breakdown",
             "`!support` – Open support / bug report page",
             "`!ab ignore on` – Ignore your embeds in this server",
             "`!ab ignore off` – Stop ignoring your embeds in this server",
@@ -2323,6 +2562,10 @@ class Program
             lines.Add("`!ab whitelist clear`");
             lines.Add("`!ab silent on` – Hide relay buttons in this server");
             lines.Add("`!ab silent off` – Show relay buttons again");
+            lines.Add("`!ab togglebuttons on` – Enable relay buttons");
+            lines.Add("`!ab togglebuttons off` – Disable relay buttons");
+            lines.Add("`!ab cooldown <1-30>` – Set the relay button cooldown");
+            lines.Add("`!ab reset confirm` – Reset ApolloBot settings for this server");
         }
 
         lines.Add("");
@@ -2365,6 +2608,7 @@ class Program
             existing.ServerName = guild.Name;
             existing.LastKnownMemberCount = guild.MemberCount;
             existing.LastUpdatedAtUtc = DateTime.UtcNow;
+            existing.PlatformUsage ??= new Dictionary<string, long>();
             return;
         }
 
@@ -2374,11 +2618,12 @@ class Program
             ServerName = guild.Name,
             LastKnownMemberCount = guild.MemberCount,
             FirstSeenAtUtc = DateTime.UtcNow,
-            LastUpdatedAtUtc = DateTime.UtcNow
+            LastUpdatedAtUtc = DateTime.UtcNow,
+            PlatformUsage = new Dictionary<string, long>()
         };
     }
 
-    private void RecordGuildEmbedFix(SocketGuild guild)
+    private void RecordGuildEmbedFix(SocketGuild guild, IEnumerable<string>? platforms = null)
     {
         EnsureGuildUsageStatsEntry(guild);
 
@@ -2388,6 +2633,17 @@ class Program
         stats.LastKnownMemberCount = guild.MemberCount;
         stats.LastUsedAtUtc = DateTime.UtcNow;
         stats.LastUpdatedAtUtc = DateTime.UtcNow;
+
+        if (platforms != null)
+        {
+            foreach (string platform in platforms.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct())
+            {
+                if (!stats.PlatformUsage.ContainsKey(platform))
+                    stats.PlatformUsage[platform] = 0;
+
+                stats.PlatformUsage[platform]++;
+            }
+        }
 
         SaveGuildUsageStats();
     }
@@ -2641,7 +2897,10 @@ class Program
             if (loaded != null)
             {
                 foreach ((ulong guildId, GuildUsageStats stats) in loaded)
+                {
+                    stats.PlatformUsage ??= new Dictionary<string, long>();
                     _guildUsageStats[guildId] = stats;
+                }
             }
         }
         catch (Exception ex)
@@ -2677,6 +2936,9 @@ class Program
         {
             GuildId = guildId,
             Enabled = true,
+            SilentMode = false,
+            ButtonsEnabled = true,
+            ButtonCooldownSeconds = 3,
             WhitelistedChannelIds = new List<ulong>()
         };
 
@@ -2834,6 +3096,12 @@ class Program
                "An admin can also run `!ab perms` here to see my permission report.";
     }
 
+
+    private MessageComponent BuildButtonsForGuild(ulong guildId, List<string> platforms, bool silentMode = false)
+    {
+        GuildSettings settings = GetOrCreateGuildSettings(guildId);
+        return BuildButtons(platforms, silentMode || !settings.ButtonsEnabled);
+    }
 
     private MessageComponent BuildButtons(List<string> platforms, bool silentMode = false)
     {
@@ -3243,7 +3511,12 @@ class Program
             _relayStates.Clear();
 
             foreach ((ulong messageId, RelayMessageState state) in loadedStates)
+            {
+                if (state.GuildId == 0)
+                    state.GuildId = 0;
+
                 _relayStates[messageId] = state;
+            }
 
             Console.WriteLine($"Loaded {_relayStates.Count} relay state(s) from disk.");
         }
@@ -3985,7 +4258,15 @@ class Program
             _guildSettings.Clear();
 
             foreach ((ulong guildId, GuildSettings settings) in loaded)
+            {
+                if (settings.ButtonCooldownSeconds <= 0)
+                {
+                    settings.ButtonCooldownSeconds = 3;
+                    settings.ButtonsEnabled = true;
+                }
+
                 _guildSettings[guildId] = settings;
+            }
 
             Console.WriteLine($"Loaded {_guildSettings.Count} guild setting profile(s) from disk.");
         }
@@ -4083,6 +4364,7 @@ class GuildUsageStats
     public DateTime FirstSeenAtUtc { get; set; }
     public DateTime LastUsedAtUtc { get; set; }
     public DateTime LastUpdatedAtUtc { get; set; }
+    public Dictionary<string, long> PlatformUsage { get; set; } = new();
 }
 
 class BotPresenceSettings
@@ -4100,6 +4382,7 @@ class RelayMessageState
     public string WebhookToken { get; set; } = "";
     public ulong OriginalAuthorId { get; set; }
     public bool SilentMode { get; set; }
+    public ulong GuildId { get; set; }
     public List<string> Platforms { get; set; } = new();
     public Dictionary<string, int> ProviderIndexes { get; set; } = new();
 }
@@ -4168,6 +4451,8 @@ class GuildSettings
     public ulong GuildId { get; set; }
     public bool Enabled { get; set; } = true;
     public bool SilentMode { get; set; } = false;
+    public bool ButtonsEnabled { get; set; } = true;
+    public int ButtonCooldownSeconds { get; set; } = 3;
     public List<ulong> WhitelistedChannelIds { get; set; } = new();
 }
 
