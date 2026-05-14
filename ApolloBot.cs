@@ -575,7 +575,7 @@ class Program
 
         if (parts.Length < 2)
         {
-            await SendBotHelp(textChannel);
+            await SendBotHelp(textChannel, message.Author.Id);
             return;
         }
 
@@ -583,25 +583,25 @@ class Program
 
         if (sub == "help")
         {
-            await SendBotHelp(textChannel);
+            await SendBotHelp(textChannel, message.Author.Id);
             return;
         }
 
         if (sub == "provider")
         {
-            await HandleProviderCommand(textChannel, parts);
+            await HandleProviderCommand(textChannel, message.Author.Id, parts);
             return;
         }
 
         if (sub == "special")
         {
-            await HandleSpecialTwitterUserCommand(textChannel, parts);
+            await HandleSpecialTwitterUserCommand(textChannel, message.Author.Id, parts);
             return;
         }
 
         if (sub == "update")
         {
-            await HandlePlannedUpdateOwnerCommand(textChannel, parts);
+            await HandlePlannedUpdateOwnerCommand(textChannel, message.Author.Id, parts);
             return;
         }
 
@@ -609,7 +609,7 @@ class Program
         {
             if (parts.Length < 5)
             {
-                await textChannel.SendMessageAsync(
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, 
                     "Usage:\n" +
                     "`!bot status <type> <status> <text>`\n" +
                     "Types: playing, watching, listening, streaming\n" +
@@ -626,13 +626,13 @@ class Program
 
             if (type is not ("playing" or "watching" or "listening" or "streaming"))
             {
-                await textChannel.SendMessageAsync("Invalid type. Use: playing, watching, listening, or streaming.");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Invalid type. Use: playing, watching, listening, or streaming.");
                 return;
             }
 
             if (status is not ("online" or "idle" or "dnd" or "invisible"))
             {
-                await textChannel.SendMessageAsync("Invalid status. Use: online, idle, dnd, or invisible.");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Invalid status. Use: online, idle, dnd, or invisible.");
                 return;
             }
 
@@ -640,7 +640,7 @@ class Program
             {
                 if (parts.Length < 6)
                 {
-                    await textChannel.SendMessageAsync(
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id, 
                         "Usage for streaming:\n`!bot status streaming <status> <url> <text>`");
                     return;
                 }
@@ -655,7 +655,7 @@ class Program
 
             if (string.IsNullOrWhiteSpace(textValue))
             {
-                await textChannel.SendMessageAsync("Status text cannot be empty.");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Status text cannot be empty.");
                 return;
             }
 
@@ -667,14 +667,14 @@ class Program
             SavePresenceSettings();
             await ApplyPresenceAsync();
 
-            await textChannel.SendMessageAsync($"✅ Status updated to **{type} {textValue}**");
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"✅ Status updated to **{type} {textValue}**");
             return;
         }
 
         if (sub == "servercount")
         {
             int count = _client?.Guilds.Count ?? 0;
-            await textChannel.SendMessageAsync($"🌐 Connected to **{count}** server(s).");
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"🌐 Connected to **{count}** server(s).");
             return;
         }
 
@@ -682,7 +682,7 @@ class Program
         {
             if (parts.Length < 3 || !long.TryParse(parts[2], out long newCount) || newCount < 0)
             {
-                await textChannel.SendMessageAsync("Usage: `!bot setembeds <number>`");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Usage: `!bot setembeds <number>`");
                 return;
             }
 
@@ -693,7 +693,7 @@ class Program
 
             SaveBotStatsHeartbeat();
 
-            await textChannel.SendMessageAsync($"✅ Embeds fixed count set to **{newCount}**.");
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"✅ Embeds fixed count set to **{newCount}**.");
             return;
         }
 
@@ -701,7 +701,7 @@ class Program
         {
             if (parts.Length < 3)
             {
-                await textChannel.SendMessageAsync(
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, 
                     "Usage: `!bot setservicetime <duration>`\n" +
                     "Examples: `!bot setservicetime 11d`, `!bot setservicetime 11d12h`, `!bot setservicetime 3h30m`, `!bot setservicetime 90m`");
                 return;
@@ -711,7 +711,7 @@ class Program
 
             if (!TryParseDurationInput(durationText, out long totalSeconds) || totalSeconds < 0)
             {
-                await textChannel.SendMessageAsync(
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, 
                     "Invalid duration. Examples: `11d`, `11d12h`, `3h30m`, `90m`, `3600s`");
                 return;
             }
@@ -726,7 +726,7 @@ class Program
 
             SaveBotStatsHeartbeat();
 
-            await textChannel.SendMessageAsync($"✅ Service time set to **{FormatDuration(TimeSpan.FromSeconds(totalSeconds))}**.");
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"✅ Service time set to **{FormatDuration(TimeSpan.FromSeconds(totalSeconds))}**.");
             return;
         }
 
@@ -734,7 +734,7 @@ class Program
         {
             if (_client == null)
             {
-                await textChannel.SendMessageAsync("Client not ready.");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Client not ready.");
                 return;
             }
 
@@ -746,7 +746,7 @@ class Program
 
             if (guilds.Count == 0)
             {
-                await textChannel.SendMessageAsync("I'm not in any servers.");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "I'm not in any servers.");
                 return;
             }
 
@@ -758,7 +758,8 @@ class Program
                 page: 0,
                 pageSize: DefaultPageSize,
                 color: Color.Gold,
-                headerText: $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}");
+                headerText: $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}",
+                ownerUserId: message.Author.Id);
 
             return;
         }
@@ -767,17 +768,17 @@ class Program
         {
             if (parts.Length >= 4 && parts[2].Equals("remove", StringComparison.OrdinalIgnoreCase))
             {
-                await RemoveServerFromTopServersAsync(textChannel, parts);
+                await RemoveServerFromTopServersAsync(textChannel, message.Author.Id, parts);
                 return;
             }
 
-            await SendTopServersByUsageAsync(textChannel);
+            await SendTopServersByUsageAsync(textChannel, message.Author.Id);
             return;
         }
 
         if (sub == "serverstats")
         {
-            await SendSingleServerStatsAsync(textChannel, parts);
+            await SendSingleServerStatsAsync(textChannel, message.Author.Id, parts);
             return;
         }
 
@@ -805,14 +806,14 @@ class Program
                 .WithCurrentTimestamp()
                 .Build();
 
-            await textChannel.SendMessageAsync(embed: embed);
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, embed: embed);
             return;
         }
 
-        await SendBotHelp(textChannel);
+        await SendBotHelp(textChannel, message.Author.Id);
     }
 
-    private async Task SendBotHelp(SocketTextChannel channel)
+    private async Task SendBotHelp(SocketTextChannel channel, ulong ownerUserId)
     {
         await SendPaginatedEmbedAsync(
             channel,
@@ -822,7 +823,8 @@ class Program
             page: 0,
             pageSize: DefaultPageSize,
             color: Color.DarkPurple,
-            headerText: "Owner-only controls and maintenance commands.");
+            headerText: "Owner-only controls and maintenance commands.",
+            ownerUserId: ownerUserId);
     }
 
     private (string DisplayName, string AvatarUrl) GetRelayIdentity(IUser user, SocketGuild? guild = null)
@@ -962,7 +964,7 @@ class Program
 
         if (sub == "update" && IsBotOwner(message.Author))
         {
-            await HandlePlannedUpdateOwnerCommand(textChannel, new[] { "bot", "update" }.Concat(parts.Skip(1)).ToArray());
+            await HandlePlannedUpdateOwnerCommand(textChannel, message.Author.Id, new[] { "bot", "update" }.Concat(parts.Skip(1)).ToArray());
             return;
         }
 
@@ -1375,7 +1377,7 @@ class Program
         await channel.SendMessageAsync(embed: embed);
     }
 
-    private async Task SendProviders(SocketTextChannel channel)
+    private async Task SendProviders(SocketTextChannel channel, ulong? ownerUserId = null)
     {
         var lines = _providers
             .OrderBy(p => p.Key)
@@ -1387,7 +1389,10 @@ class Program
             .WithColor(Color.LightGrey)
             .Build();
 
-        await channel.SendMessageAsync(embed: embed);
+        if (ownerUserId.HasValue)
+            await SendBotOwnerMessageAsync(channel, ownerUserId.Value, embed: embed);
+        else
+            await channel.SendMessageAsync(embed: embed);
     }
 
 
@@ -1428,11 +1433,14 @@ class Program
         await channel.SendMessageAsync(embed: embed, components: components);
     }
 
-    private async Task SendPlannedUpdates(SocketTextChannel channel)
+    private async Task SendPlannedUpdates(SocketTextChannel channel, ulong? ownerUserId = null)
     {
         if (_plannedUpdates.Count == 0)
         {
-            await channel.SendMessageAsync("There are no planned updates listed right now.");
+            if (ownerUserId.HasValue)
+                await SendBotOwnerMessageAsync(channel, ownerUserId.Value, "There are no planned updates listed right now.");
+            else
+                await channel.SendMessageAsync("There are no planned updates listed right now.");
             return;
         }
 
@@ -1445,14 +1453,17 @@ class Program
             .WithFooter("Subject to change.")
             .Build();
 
-        await channel.SendMessageAsync(embed: embed);
+        if (ownerUserId.HasValue)
+            await SendBotOwnerMessageAsync(channel, ownerUserId.Value, embed: embed);
+        else
+            await channel.SendMessageAsync(embed: embed);
     }
 
-    private async Task HandlePlannedUpdateOwnerCommand(SocketTextChannel channel, string[] parts)
+    private async Task HandlePlannedUpdateOwnerCommand(SocketTextChannel channel, ulong ownerUserId, string[] parts)
     {
         if (parts.Length < 3)
         {
-            await channel.SendMessageAsync(
+            await SendBotOwnerMessageAsync(channel, ownerUserId, 
                 "Usage:\n" +
                 "`!bot update add <id> <text>`\n" +
                 "`!bot update edit <id> <text>`\n" +
@@ -1466,7 +1477,7 @@ class Program
 
         if (action == "list")
         {
-            await SendPlannedUpdates(channel);
+            await SendPlannedUpdates(channel, ownerUserId);
             return;
         }
 
@@ -1474,7 +1485,7 @@ class Program
         {
             _plannedUpdates.Clear();
             SavePlannedUpdates();
-            await channel.SendMessageAsync("Cleared all planned updates.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Cleared all planned updates.");
             return;
         }
 
@@ -1482,13 +1493,13 @@ class Program
         {
             if (parts.Length < 4 || !int.TryParse(parts[3], out int removeId) || removeId <= 0)
             {
-                await channel.SendMessageAsync("Please provide a valid positive update ID.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a valid positive update ID.");
                 return;
             }
 
             bool removed = _plannedUpdates.Remove(removeId);
             SavePlannedUpdates();
-            await channel.SendMessageAsync(removed
+            await SendBotOwnerMessageAsync(channel, ownerUserId, removed
                 ? $"Removed update `{removeId}`."
                 : $"Update `{removeId}` was not found.");
             return;
@@ -1496,13 +1507,13 @@ class Program
 
         if (action is not ("add" or "edit"))
         {
-            await channel.SendMessageAsync("Unknown update action. Use add, edit, remove, list, or clear.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Unknown update action. Use add, edit, remove, list, or clear.");
             return;
         }
 
         if (parts.Length < 5 || !int.TryParse(parts[3], out int id) || id <= 0)
         {
-            await channel.SendMessageAsync("Please provide a valid positive update ID.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a valid positive update ID.");
             return;
         }
 
@@ -1510,23 +1521,23 @@ class Program
 
         if (string.IsNullOrWhiteSpace(textValue))
         {
-            await channel.SendMessageAsync("Please provide update text.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide update text.");
             return;
         }
 
         _plannedUpdates[id] = textValue;
         SavePlannedUpdates();
 
-        await channel.SendMessageAsync(action == "add"
+        await SendBotOwnerMessageAsync(channel, ownerUserId, action == "add"
             ? $"Added update `{id}`."
             : $"Updated update `{id}`.");
     }
 
-    private async Task HandleSpecialTwitterUserCommand(SocketTextChannel channel, string[] parts)
+    private async Task HandleSpecialTwitterUserCommand(SocketTextChannel channel, ulong ownerUserId, string[] parts)
     {
         if (parts.Length < 3)
         {
-            await channel.SendMessageAsync(
+            await SendBotOwnerMessageAsync(channel, ownerUserId, 
                 "Usage:\n" +
                 "`!bot special add <userId>`\n" +
                 "`!bot special remove <userId>`\n" +
@@ -1541,12 +1552,12 @@ class Program
         {
             if (_specialTwitterUsers.Count == 0)
             {
-                await channel.SendMessageAsync("No users are approved for the silly Twitter/X providers.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, "No users are approved for the silly Twitter/X providers.");
                 return;
             }
 
             string users = string.Join("\n", _specialTwitterUsers.Select(x => $"• `{x}`"));
-            await channel.SendMessageAsync($"**Approved silly Twitter/X users:**\n{users}");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, $"**Approved silly Twitter/X users:**\n{users}");
             return;
         }
 
@@ -1554,13 +1565,13 @@ class Program
         {
             _specialTwitterUsers.Clear();
             SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync("Cleared the silly Twitter/X user list.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Cleared the silly Twitter/X user list.");
             return;
         }
 
         if (parts.Length < 4 || !ulong.TryParse(parts[3], out ulong userId))
         {
-            await channel.SendMessageAsync("Please provide a valid user ID.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a valid user ID.");
             return;
         }
 
@@ -1568,7 +1579,7 @@ class Program
         {
             bool added = _specialTwitterUsers.Add(userId);
             SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync(added
+            await SendBotOwnerMessageAsync(channel, ownerUserId, added
                 ? $"Added `{userId}` to the silly Twitter/X list."
                 : $"`{userId}` is already on the silly Twitter/X list.");
             return;
@@ -1578,20 +1589,20 @@ class Program
         {
             bool removed = _specialTwitterUsers.Remove(userId);
             SaveSpecialTwitterUsers();
-            await channel.SendMessageAsync(removed
+            await SendBotOwnerMessageAsync(channel, ownerUserId, removed
                 ? $"Removed `{userId}` from the silly Twitter/X list."
                 : $"`{userId}` was not on the silly Twitter/X list.");
             return;
         }
 
-        await channel.SendMessageAsync("Unknown special action. Use add, remove, list, or clear.");
+        await SendBotOwnerMessageAsync(channel, ownerUserId, "Unknown special action. Use add, remove, list, or clear.");
     }
 
-    private async Task HandleProviderCommand(SocketTextChannel channel, string[] parts)
+    private async Task HandleProviderCommand(SocketTextChannel channel, ulong ownerUserId, string[] parts)
     {
         if (parts.Length < 3)
         {
-            await channel.SendMessageAsync(
+            await SendBotOwnerMessageAsync(channel, ownerUserId, 
                 "Usage:\n" +
                 "`!bot provider list`\n" +
                 "`!bot provider list <platform>`\n" +
@@ -1607,7 +1618,7 @@ class Program
         {
             if (parts.Length == 3)
             {
-                await SendProviders(channel);
+                await SendProviders(channel, ownerUserId);
                 return;
             }
 
@@ -1615,18 +1626,18 @@ class Program
 
             if (!_providers.TryGetValue(platform, out List<string>? listedProviders))
             {
-                await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
                 return;
             }
 
-            await channel.SendMessageAsync(
+            await SendBotOwnerMessageAsync(channel, ownerUserId, 
                 $"**{FormatPlatformName(platform)} providers:** {string.Join(", ", listedProviders)}");
             return;
         }
 
         if (parts.Length < 4)
         {
-            await channel.SendMessageAsync("Please provide a platform.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a platform.");
             return;
         }
 
@@ -1634,7 +1645,7 @@ class Program
 
         if (!_providers.ContainsKey(targetPlatform))
         {
-            await channel.SendMessageAsync("Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
             return;
         }
 
@@ -1642,29 +1653,21 @@ class Program
         {
             _providers[targetPlatform].Clear();
             SaveProviders();
-            await channel.SendMessageAsync($"Cleared all providers for {FormatPlatformName(targetPlatform)}.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, $"Cleared all providers for {FormatPlatformName(targetPlatform)}.");
             return;
         }
 
         if (parts.Length < 5)
         {
-            await channel.SendMessageAsync("Please provide a provider domain.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a provider domain.");
             return;
         }
 
-        string domain = parts[4].Trim().ToLowerInvariant();
-
-        if (domain.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-            domain = domain["http://".Length..];
-
-        if (domain.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            domain = domain["https://".Length..];
-
-        domain = domain.Trim('/');
+        string domain = SanitizeProviderDomain(parts[4]);
 
         if (string.IsNullOrWhiteSpace(domain))
         {
-            await channel.SendMessageAsync("Please provide a valid provider domain.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Please provide a valid provider domain.");
             return;
         }
 
@@ -1672,13 +1675,13 @@ class Program
         {
             if (_providers[targetPlatform].Any(x => string.Equals(x, domain, StringComparison.OrdinalIgnoreCase)))
             {
-                await channel.SendMessageAsync($"{domain} is already configured for {FormatPlatformName(targetPlatform)}.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, $"{domain} is already configured for {FormatPlatformName(targetPlatform)}.");
                 return;
             }
 
             _providers[targetPlatform].Add(domain);
             SaveProviders();
-            await channel.SendMessageAsync($"Added `{domain}` to {FormatPlatformName(targetPlatform)} providers.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, $"Added `{domain}` to {FormatPlatformName(targetPlatform)} providers.");
             return;
         }
 
@@ -1689,17 +1692,17 @@ class Program
 
             if (existing == null)
             {
-                await channel.SendMessageAsync($"{domain} was not found for {FormatPlatformName(targetPlatform)}.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, $"{domain} was not found for {FormatPlatformName(targetPlatform)}.");
                 return;
             }
 
             _providers[targetPlatform].Remove(existing);
             SaveProviders();
-            await channel.SendMessageAsync($"Removed `{existing}` from {FormatPlatformName(targetPlatform)} providers.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, $"Removed `{existing}` from {FormatPlatformName(targetPlatform)} providers.");
             return;
         }
 
-        await channel.SendMessageAsync("Unknown provider action. Use add, remove, list, or clear.");
+        await SendBotOwnerMessageAsync(channel, ownerUserId, "Unknown provider action. Use add, remove, list, or clear.");
     }
 
     private async Task HandleWhitelistCommand(SocketUserMessage message, SocketTextChannel textChannel, GuildSettings settings, string[] parts)
@@ -2212,9 +2215,50 @@ class Program
         return result;
     }
 
+    private MessageComponent BuildOwnerDeleteButton(ulong ownerUserId)
+    {
+        return new ComponentBuilder()
+            .WithButton("Delete", $"owner_delete:{ownerUserId}", ButtonStyle.Danger, emote: new Emoji("🗑️"))
+            .Build();
+    }
+
+    private async Task SendBotOwnerMessageAsync(SocketTextChannel channel, ulong ownerUserId, string? text = null, Embed? embed = null)
+    {
+        await channel.SendMessageAsync(
+            text: text,
+            embed: embed,
+            components: BuildOwnerDeleteButton(ownerUserId));
+    }
+
+    private async Task HandleOwnerDeleteButtonAsync(SocketMessageComponent component)
+    {
+        string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length != 2 || !ulong.TryParse(parts[1], out ulong ownerUserId))
+        {
+            await component.RespondAsync("This delete button is invalid.", ephemeral: true);
+            return;
+        }
+
+        if (component.User.Id != ownerUserId)
+        {
+            await component.RespondAsync("This cannot be deleted by non authorized users.", ephemeral: true);
+            return;
+        }
+
+        await component.DeferAsync(ephemeral: true);
+        await component.Message.DeleteAsync();
+    }
+
     private async Task ButtonExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
+
+        if (customId.StartsWith("owner_delete:", StringComparison.Ordinal))
+        {
+            await HandleOwnerDeleteButtonAsync(component);
+            return;
+        }
 
         if (customId.StartsWith("page:", StringComparison.Ordinal))
         {
@@ -2382,7 +2426,8 @@ class Program
         int page,
         int pageSize,
         Color color,
-        string? headerText = null)
+        string? headerText = null,
+        ulong? ownerUserId = null)
     {
         if (lines.Count == 0)
         {
@@ -2418,17 +2463,22 @@ class Program
 
         await channel.SendMessageAsync(
             embed: embed,
-            components: BuildPaginatorComponents(paginatorType, page, totalPages));
+            components: BuildPaginatorComponents(paginatorType, page, totalPages, ownerUserId));
     }
 
-    private MessageComponent BuildPaginatorComponents(string paginatorType, int page, int totalPages)
+    private MessageComponent BuildPaginatorComponents(string paginatorType, int page, int totalPages, ulong? ownerUserId = null)
     {
         bool hasPrevious = page > 0;
         bool hasNext = page < totalPages - 1;
 
+        string ownerSuffix = ownerUserId.HasValue ? $":{ownerUserId.Value}" : "";
+
         var builder = new ComponentBuilder()
-            .WithButton("Previous", $"page:{paginatorType}:{page - 1}", ButtonStyle.Secondary, disabled: !hasPrevious)
-            .WithButton("Next", $"page:{paginatorType}:{page + 1}", ButtonStyle.Primary, disabled: !hasNext);
+            .WithButton("Previous", $"page:{paginatorType}:{page - 1}{ownerSuffix}", ButtonStyle.Secondary, disabled: !hasPrevious)
+            .WithButton("Next", $"page:{paginatorType}:{page + 1}{ownerSuffix}", ButtonStyle.Primary, disabled: !hasNext);
+
+        if (ownerUserId.HasValue)
+            builder.WithButton("Delete", $"owner_delete:{ownerUserId.Value}", ButtonStyle.Danger, emote: new Emoji("🗑️"));
 
         return builder.Build();
     }
@@ -2438,13 +2488,17 @@ class Program
         try
         {
             string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length != 3)
+            if (parts.Length != 3 && parts.Length != 4)
             {
                 await component.RespondAsync("Invalid paginator button.", ephemeral: true);
                 return;
             }
 
             string paginatorType = parts[1];
+            ulong? ownerUserId = null;
+
+            if (parts.Length == 4 && ulong.TryParse(parts[3], out ulong parsedOwnerUserId))
+                ownerUserId = parsedOwnerUserId;
 
             if (!int.TryParse(parts[2], out int page))
             {
@@ -2525,7 +2579,7 @@ class Program
             await component.UpdateAsync(msg =>
             {
                 msg.Embed = Optional.Create(embed);
-                msg.Components = Optional.Create(BuildPaginatorComponents(paginatorType, page, totalPages));
+                msg.Components = Optional.Create(BuildPaginatorComponents(paginatorType, page, totalPages, ownerUserId));
             });
         }
         catch (Exception ex)
@@ -2683,11 +2737,11 @@ class Program
         SaveGuildUsageStats();
     }
 
-    private async Task RemoveServerFromTopServersAsync(SocketTextChannel channel, string[] parts)
+    private async Task RemoveServerFromTopServersAsync(SocketTextChannel channel, ulong ownerUserId, string[] parts)
     {
         if (parts.Length < 4 || !ulong.TryParse(parts[3], out ulong guildId))
         {
-            await channel.SendMessageAsync("Usage: `!bot topservers remove <serverId>`");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Usage: `!bot topservers remove <serverId>`");
             return;
         }
 
@@ -2699,15 +2753,15 @@ class Program
 
         if (!removedUsage && !removedActivity)
         {
-            await channel.SendMessageAsync("That server ID was not found in tracked analytics.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "That server ID was not found in tracked analytics.");
             return;
         }
 
         string extra = removedActivity ? " and guild activity history" : "";
-        await channel.SendMessageAsync($"✅ Removed server `{guildId}` from tracked analytics{extra}.");
+        await SendBotOwnerMessageAsync(channel, ownerUserId, $"✅ Removed server `{guildId}` from tracked analytics{extra}.");
     }
 
-    private async Task SendTopServersByUsageAsync(SocketTextChannel channel)
+    private async Task SendTopServersByUsageAsync(SocketTextChannel channel, ulong ownerUserId)
     {
         var top = _guildUsageStats.Values
             .OrderByDescending(x => x.EmbedFixCount)
@@ -2717,7 +2771,7 @@ class Program
 
         if (top.Count == 0)
         {
-            await channel.SendMessageAsync("No per-server embed usage has been recorded yet.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "No per-server embed usage has been recorded yet.");
             return;
         }
 
@@ -2731,14 +2785,14 @@ class Program
             .WithCurrentTimestamp()
             .Build();
 
-        await channel.SendMessageAsync(embed: embed);
+        await SendBotOwnerMessageAsync(channel, ownerUserId, embed: embed);
     }
 
-    private async Task SendSingleServerStatsAsync(SocketTextChannel channel, string[] parts)
+    private async Task SendSingleServerStatsAsync(SocketTextChannel channel, ulong ownerUserId, string[] parts)
     {
         if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong guildId))
         {
-            await channel.SendMessageAsync("Usage: `!bot serverstats <serverId>`");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Usage: `!bot serverstats <serverId>`");
             return;
         }
 
@@ -2749,7 +2803,7 @@ class Program
 
         if (usageStats == null && activity == null && liveGuild == null)
         {
-            await channel.SendMessageAsync("I don't have any tracked data for that server ID.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "I don't have any tracked data for that server ID.");
             return;
         }
 
@@ -2785,7 +2839,7 @@ class Program
             .WithCurrentTimestamp()
             .Build();
 
-        await channel.SendMessageAsync(embed: embed);
+        await SendBotOwnerMessageAsync(channel, ownerUserId, embed: embed);
     }
 
     private async Task SyncGuildTrackingStateAsync()
@@ -4098,7 +4152,6 @@ class Program
                 "instagram",
                 new List<string>
                 {
-                    "eeinstagram.com",
                     "kkinstagram.com"
                 }
             },
@@ -4121,6 +4174,40 @@ class Program
         };
     }
 
+
+    private static string SanitizeProviderDomain(string domain)
+    {
+        domain = (domain ?? string.Empty).Trim().ToLowerInvariant();
+
+        if (domain.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            domain = domain["http://".Length..];
+
+        if (domain.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            domain = domain["https://".Length..];
+
+        domain = domain.Trim();
+        domain = domain.Trim('/', ',', '.', ';', ':', ')', ']', '}', '>', '\'', '"');
+
+        int slashIndex = domain.IndexOf('/');
+        if (slashIndex >= 0)
+            domain = domain[..slashIndex];
+
+        return domain;
+    }
+
+    private void NormalizeProviders()
+    {
+        foreach (string platform in _providers.Keys.ToList())
+        {
+            _providers[platform] = _providers[platform]
+                .Select(SanitizeProviderDomain)
+                .Where(domain => !string.IsNullOrWhiteSpace(domain))
+                .Where(domain => !string.Equals(domain, "eeinstagram.com", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
+
     private void LoadProviders()
     {
         try
@@ -4137,12 +4224,16 @@ class Program
                 JsonSerializer.Deserialize<Dictionary<string, List<string>>>(json);
 
             _providers = loaded ?? CreateDefaultProviders();
+            NormalizeProviders();
 
             foreach ((string key, List<string> defaults) in CreateDefaultProviders())
             {
                 if (!_providers.ContainsKey(key))
                     _providers[key] = new List<string>(defaults);
             }
+
+            NormalizeProviders();
+            SaveProviders();
         }
         catch (Exception ex)
         {
