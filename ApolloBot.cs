@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Discord;
+using Discord.Audio;
 using Discord.Net;
 using Discord.Rest;
 using Discord.Webhook;
@@ -162,7 +163,8 @@ class Program
             GatewayIntents =
                 GatewayIntents.Guilds |
                 GatewayIntents.GuildMessages |
-                GatewayIntents.MessageContent
+                GatewayIntents.MessageContent |
+                GatewayIntents.GuildVoiceStates
         });
 
         _client.Log += Log;
@@ -675,6 +677,52 @@ class Program
         {
             int count = _client?.Guilds.Count ?? 0;
             await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"🌐 Connected to **{count}** server(s).");
+            return;
+        }
+
+
+
+        if (sub == "join")
+        {
+            if (_client == null)
+                return;
+
+            SocketVoiceChannel? targetVc = null;
+
+            // !bot join
+            // Joins the voice channel the owner is currently connected to.
+            if (parts.Length == 2)
+            {
+                if (message.Author is SocketGuildUser guildUser)
+                    targetVc = guildUser.VoiceChannel;
+            }
+            // !bot join <VoiceChannelID>
+            // Joins a specific voice channel by ID if the owner is not in VC.
+            else if (parts.Length >= 3)
+            {
+                if (ulong.TryParse(parts[2], out ulong vcId))
+                    targetVc = textChannel.Guild.GetChannel(vcId) as SocketVoiceChannel;
+            }
+
+            try
+            {
+                // Delete first so the owner command does not linger in chat.
+                await message.DeleteAsync();
+
+                if (targetVc == null)
+                    return;
+
+                // Join muted/deafened and send no Discord text response.
+                await targetVc.ConnectAsync(selfDeaf: true, selfMute: true);
+
+                Console.WriteLine(
+                    $"[VOICE] ApolloBot joined VC '{targetVc.Name}' in guild '{targetVc.Guild.Name}'.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VOICE] Failed to join VC: {ex}");
+            }
+
             return;
         }
 
@@ -2604,6 +2652,7 @@ class Program
             "`!bot help` – Show this menu",
             "`!bot stats` – Show bot stats and uptime",
             "`!bot servercount` – Show total connected servers",
+            "`!bot join [voiceChannelId]` – Silently join your current VC or a specific VC by ID",
             "`!bot servers` – List connected servers with pagination",
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
