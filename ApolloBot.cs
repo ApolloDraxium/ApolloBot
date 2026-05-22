@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 public static class DataPathHelper
@@ -81,6 +82,7 @@ class Program
 
     // Keeps voice connections alive so Discord.Net does not drop the bot after a few seconds.
     private readonly Dictionary<ulong, IAudioClient> _voiceConnections = new();
+    private readonly Dictionary<ulong, CancellationTokenSource> _voiceKeepAliveTokens = new();
 
     private const string WebhookName = "Apollo Bot Relay";
 
@@ -716,6 +718,13 @@ class Program
                     return;
 
                 // If already connected in this guild, disconnect first so the stored client is fresh.
+                if (_voiceKeepAliveTokens.TryGetValue(targetVc.Guild.Id, out CancellationTokenSource? existingKeepAlive))
+                {
+                    existingKeepAlive.Cancel();
+                    existingKeepAlive.Dispose();
+                    _voiceKeepAliveTokens.Remove(targetVc.Guild.Id);
+                }
+
                 if (_voiceConnections.TryGetValue(targetVc.Guild.Id, out IAudioClient? existingClient))
                 {
                     try
@@ -729,9 +738,14 @@ class Program
                     _voiceConnections.Remove(targetVc.Guild.Id);
                 }
 
-                // Join muted/deafened and keep the returned IAudioClient stored, otherwise it can drop after a few seconds.
-                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: true, selfMute: true);
+                // Join deafened and stream silent PCM frames so Discord keeps the voice session alive.
+                // selfMute is false because a muted voice session may not transmit packets, which can cause disconnects.
+                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: true, selfMute: false);
                 _voiceConnections[targetVc.Guild.Id] = audioClient;
+
+                var keepAliveToken = new CancellationTokenSource();
+                _voiceKeepAliveTokens[targetVc.Guild.Id] = keepAliveToken;
+                _ = Task.Run(() => KeepSilentVoiceAliveAsync(targetVc.Guild.Id, audioClient, keepAliveToken.Token));
 
                 Console.WriteLine(
                     $"[VOICE] ApolloBot joined VC '{targetVc.Name}' in guild '{targetVc.Guild.Name}'.");
@@ -749,6 +763,13 @@ class Program
             try
             {
                 await message.DeleteAsync();
+
+                if (_voiceKeepAliveTokens.TryGetValue(textChannel.Guild.Id, out CancellationTokenSource? keepAliveToken))
+                {
+                    keepAliveToken.Cancel();
+                    keepAliveToken.Dispose();
+                    _voiceKeepAliveTokens.Remove(textChannel.Guild.Id);
+                }
 
                 if (_voiceConnections.TryGetValue(textChannel.Guild.Id, out IAudioClient? audioClient))
                 {
@@ -899,6 +920,34 @@ class Program
         }
 
         await SendBotHelp(textChannel, message.Author.Id);
+    }
+
+    private async Task KeepSilentVoiceAliveAsync(ulong guildId, IAudioClient audioClient, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using AudioOutStream stream = audioClient.CreatePCMStream(AudioApplication.Mixed);
+
+            // 20ms of 48kHz stereo 16-bit PCM silence:
+            // 48000 samples/sec * 2 channels * 2 bytes/sample * 0.02 sec = 3840 bytes.
+            byte[] silenceFrame = new byte[3840];
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await stream.WriteAsync(silenceFrame, 0, silenceFrame.Length, cancellationToken);
+                await Task.Delay(20, cancellationToken);
+            }
+
+            await stream.FlushAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when !bot leave is used or the bot reconnects to a different VC.
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[VOICE] Silent keep-alive stopped for guild {guildId}: {ex}");
+        }
     }
 
     private async Task SendBotHelp(SocketTextChannel channel, ulong ownerUserId)
