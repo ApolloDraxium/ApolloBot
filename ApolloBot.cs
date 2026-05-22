@@ -713,76 +713,102 @@ class Program
             {
                 // Delete first so the owner command does not linger in chat.
                 await message.DeleteAsync();
-
-                if (targetVc == null)
-                    return;
-
-                // If already connected in this guild, disconnect first so the stored client is fresh.
-                if (_voiceKeepAliveTokens.TryGetValue(targetVc.Guild.Id, out CancellationTokenSource? existingKeepAlive))
-                {
-                    existingKeepAlive.Cancel();
-                    existingKeepAlive.Dispose();
-                    _voiceKeepAliveTokens.Remove(targetVc.Guild.Id);
-                }
-
-                if (_voiceConnections.TryGetValue(targetVc.Guild.Id, out IAudioClient? existingClient))
-                {
-                    try
-                    {
-                        await existingClient.StopAsync();
-                    }
-                    catch
-                    {
-                    }
-
-                    _voiceConnections.Remove(targetVc.Guild.Id);
-                }
-
-                if (_client?.CurrentUser != null)
-                {
-                    SocketGuildUser? botUser = targetVc.Guild.GetUser(_client.CurrentUser.Id);
-                    if (botUser != null)
-                    {
-                        ChannelPermissions vcPerms = botUser.GetPermissions(targetVc);
-                        Console.WriteLine(
-                            $"[VOICE DEBUG] Target VC='{targetVc.Name}' ({targetVc.Id}) Guild='{targetVc.Guild.Name}' ({targetVc.Guild.Id}) " +
-                            $"Perms: ViewChannel={vcPerms.ViewChannel}, Connect={vcPerms.Connect}, Speak={vcPerms.Speak}, UseVoiceActivation={vcPerms.UseVAD}");
-                    }
-                    else
-                    {
-                        Console.WriteLine("[VOICE DEBUG] Could not resolve bot guild user for voice permission check.");
-                    }
-                }
-
-                Console.WriteLine("[VOICE DEBUG] Calling ConnectAsync(selfDeaf: false, selfMute: false)...");
-
-                // Join and stream silent PCM frames so Discord keeps the voice session alive.
-                // selfMute must stay false or Discord may not accept outgoing audio packets.
-                // selfDeaf is false for debugging. Once stable, you can try true again.
-                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: false, selfMute: false);
-                _voiceConnections[targetVc.Guild.Id] = audioClient;
-
-                Console.WriteLine("[VOICE DEBUG] ConnectAsync completed. Starting silent PCM keep-alive task...");
-
-                var keepAliveToken = new CancellationTokenSource();
-                _voiceKeepAliveTokens[targetVc.Guild.Id] = keepAliveToken;
-
-                _ = Task.Run(() => KeepSilentVoiceAliveAsync(targetVc.Guild.Id, audioClient, keepAliveToken.Token))
-                    .ContinueWith(task =>
-                    {
-                        if (task.Exception != null)
-                            Console.WriteLine($"[VOICE DEBUG] Keep-alive task faulted: {task.Exception.Flatten()}");
-                        else
-                            Console.WriteLine($"[VOICE DEBUG] Keep-alive task ended for guild {targetVc.Guild.Id}.");
-                    });
-
-                Console.WriteLine(
-                    $"[VOICE] ApolloBot joined VC '{targetVc.Name}' in guild '{targetVc.Guild.Name}'.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[VOICE] Failed to join VC: {ex}");
+                Console.WriteLine($"[VOICE DEBUG] Failed to delete join command: {ex}");
             }
+
+            if (targetVc == null)
+            {
+                Console.WriteLine("[VOICE DEBUG] Join requested, but no valid target voice channel was found.");
+                return;
+            }
+
+            SocketVoiceChannel voiceChannelToJoin = targetVc;
+
+            // Important: ConnectAsync needs gateway events to complete.
+            // Running it directly inside MessageReceived can block the gateway and cause a timeout.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    ulong guildId = voiceChannelToJoin.Guild.Id;
+
+                    Console.WriteLine(
+                        $"[VOICE DEBUG] Background voice join starting. VC='{voiceChannelToJoin.Name}' ({voiceChannelToJoin.Id}) " +
+                        $"Guild='{voiceChannelToJoin.Guild.Name}' ({guildId})");
+
+                    // If already connected in this guild, disconnect first so the stored client is fresh.
+                    if (_voiceKeepAliveTokens.TryGetValue(guildId, out CancellationTokenSource? existingKeepAlive))
+                    {
+                        existingKeepAlive.Cancel();
+                        existingKeepAlive.Dispose();
+                        _voiceKeepAliveTokens.Remove(guildId);
+                        Console.WriteLine($"[VOICE DEBUG] Existing keep-alive token cancelled for guild {guildId}.");
+                    }
+
+                    if (_voiceConnections.TryGetValue(guildId, out IAudioClient? existingClient))
+                    {
+                        try
+                        {
+                            await existingClient.StopAsync();
+                            Console.WriteLine($"[VOICE DEBUG] Existing voice client stopped for guild {guildId}.");
+                        }
+                        catch (Exception stopEx)
+                        {
+                            Console.WriteLine($"[VOICE DEBUG] Existing voice client StopAsync failed for guild {guildId}: {stopEx}");
+                        }
+
+                        _voiceConnections.Remove(guildId);
+                    }
+
+                    if (_client?.CurrentUser != null)
+                    {
+                        SocketGuildUser? botUser = voiceChannelToJoin.Guild.GetUser(_client.CurrentUser.Id);
+                        if (botUser != null)
+                        {
+                            ChannelPermissions vcPerms = botUser.GetPermissions(voiceChannelToJoin);
+                            Console.WriteLine(
+                                $"[VOICE DEBUG] Target VC='{voiceChannelToJoin.Name}' ({voiceChannelToJoin.Id}) Guild='{voiceChannelToJoin.Guild.Name}' ({guildId}) " +
+                                $"Perms: ViewChannel={vcPerms.ViewChannel}, Connect={vcPerms.Connect}, Speak={vcPerms.Speak}, UseVoiceActivation={vcPerms.UseVAD}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("[VOICE DEBUG] Could not resolve bot guild user for voice permission check.");
+                        }
+                    }
+
+                    Console.WriteLine("[VOICE DEBUG] Calling ConnectAsync(selfDeaf: false, selfMute: false) from background task...");
+
+                    // Join and stream silent PCM frames so Discord keeps the voice session alive.
+                    // selfMute must stay false or Discord may not accept outgoing audio packets.
+                    // selfDeaf is false for debugging. Once stable, you can try true again.
+                    IAudioClient audioClient = await voiceChannelToJoin.ConnectAsync(selfDeaf: false, selfMute: false);
+                    _voiceConnections[guildId] = audioClient;
+
+                    Console.WriteLine("[VOICE DEBUG] ConnectAsync completed. Starting silent PCM keep-alive task...");
+
+                    var keepAliveToken = new CancellationTokenSource();
+                    _voiceKeepAliveTokens[guildId] = keepAliveToken;
+
+                    _ = Task.Run(() => KeepSilentVoiceAliveAsync(guildId, audioClient, keepAliveToken.Token))
+                        .ContinueWith(task =>
+                        {
+                            if (task.Exception != null)
+                                Console.WriteLine($"[VOICE DEBUG] Keep-alive task faulted: {task.Exception.Flatten()}");
+                            else
+                                Console.WriteLine($"[VOICE DEBUG] Keep-alive task ended for guild {guildId}.");
+                        });
+
+                    Console.WriteLine(
+                        $"[VOICE] ApolloBot joined VC '{voiceChannelToJoin.Name}' in guild '{voiceChannelToJoin.Guild.Name}'.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VOICE] Background join failed: {ex}");
+                }
+            });
 
             return;
         }
