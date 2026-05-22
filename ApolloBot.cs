@@ -738,14 +738,43 @@ class Program
                     _voiceConnections.Remove(targetVc.Guild.Id);
                 }
 
-                // Join deafened and stream silent PCM frames so Discord keeps the voice session alive.
-                // selfMute is false because a muted voice session may not transmit packets, which can cause disconnects.
-                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: true, selfMute: false);
+                if (_client?.CurrentUser != null)
+                {
+                    SocketGuildUser? botUser = targetVc.Guild.GetUser(_client.CurrentUser.Id);
+                    if (botUser != null)
+                    {
+                        ChannelPermissions vcPerms = botUser.GetPermissions(targetVc);
+                        Console.WriteLine(
+                            $"[VOICE DEBUG] Target VC='{targetVc.Name}' ({targetVc.Id}) Guild='{targetVc.Guild.Name}' ({targetVc.Guild.Id}) " +
+                            $"Perms: ViewChannel={vcPerms.ViewChannel}, Connect={vcPerms.Connect}, Speak={vcPerms.Speak}, UseVoiceActivation={vcPerms.UseVAD}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[VOICE DEBUG] Could not resolve bot guild user for voice permission check.");
+                    }
+                }
+
+                Console.WriteLine("[VOICE DEBUG] Calling ConnectAsync(selfDeaf: false, selfMute: false)...");
+
+                // Join and stream silent PCM frames so Discord keeps the voice session alive.
+                // selfMute must stay false or Discord may not accept outgoing audio packets.
+                // selfDeaf is false for debugging. Once stable, you can try true again.
+                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: false, selfMute: false);
                 _voiceConnections[targetVc.Guild.Id] = audioClient;
+
+                Console.WriteLine("[VOICE DEBUG] ConnectAsync completed. Starting silent PCM keep-alive task...");
 
                 var keepAliveToken = new CancellationTokenSource();
                 _voiceKeepAliveTokens[targetVc.Guild.Id] = keepAliveToken;
-                _ = Task.Run(() => KeepSilentVoiceAliveAsync(targetVc.Guild.Id, audioClient, keepAliveToken.Token));
+
+                _ = Task.Run(() => KeepSilentVoiceAliveAsync(targetVc.Guild.Id, audioClient, keepAliveToken.Token))
+                    .ContinueWith(task =>
+                    {
+                        if (task.Exception != null)
+                            Console.WriteLine($"[VOICE DEBUG] Keep-alive task faulted: {task.Exception.Flatten()}");
+                        else
+                            Console.WriteLine($"[VOICE DEBUG] Keep-alive task ended for guild {targetVc.Guild.Id}.");
+                    });
 
                 Console.WriteLine(
                     $"[VOICE] ApolloBot joined VC '{targetVc.Name}' in guild '{targetVc.Guild.Name}'.");
@@ -926,27 +955,50 @@ class Program
     {
         try
         {
+            Console.WriteLine($"[VOICE DEBUG] Keep-alive starting for guild {guildId}.");
+
             using AudioOutStream stream = audioClient.CreatePCMStream(AudioApplication.Mixed);
+
+            Console.WriteLine($"[VOICE DEBUG] PCM stream created for guild {guildId}. Sending speaking=true...");
+            await audioClient.SetSpeakingAsync(true);
 
             // 20ms of 48kHz stereo 16-bit PCM silence:
             // 48000 samples/sec * 2 channels * 2 bytes/sample * 0.02 sec = 3840 bytes.
             byte[] silenceFrame = new byte[3840];
+            long framesSent = 0;
 
             while (!cancellationToken.IsCancellationRequested)
             {
                 await stream.WriteAsync(silenceFrame, 0, silenceFrame.Length, cancellationToken);
+                framesSent++;
+
+                if (framesSent == 1 || framesSent % 250 == 0)
+                    Console.WriteLine($"[VOICE DEBUG] Silent frames sent for guild {guildId}: {framesSent}");
+
                 await Task.Delay(20, cancellationToken);
             }
 
+            Console.WriteLine($"[VOICE DEBUG] Keep-alive cancellation requested for guild {guildId}. Flushing stream...");
             await stream.FlushAsync(cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            // Expected when !bot leave is used or the bot reconnects to a different VC.
+            Console.WriteLine($"[VOICE DEBUG] Keep-alive cancelled for guild {guildId}.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[VOICE] Silent keep-alive stopped for guild {guildId}: {ex}");
+            Console.WriteLine($"[VOICE DEBUG] Silent keep-alive crashed for guild {guildId}: {ex}");
+        }
+        finally
+        {
+            try
+            {
+                await audioClient.SetSpeakingAsync(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VOICE DEBUG] Failed to set speaking=false for guild {guildId}: {ex}");
+            }
         }
     }
 
