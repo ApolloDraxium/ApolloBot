@@ -79,6 +79,9 @@ class Program
     private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
     private readonly Dictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
 
+    // Keeps voice connections alive so Discord.Net does not drop the bot after a few seconds.
+    private readonly Dictionary<ulong, IAudioClient> _voiceConnections = new();
+
     private const string WebhookName = "Apollo Bot Relay";
 
     private static readonly string DataDirectory = DataPathHelper.GetDataPath();
@@ -712,8 +715,23 @@ class Program
                 if (targetVc == null)
                     return;
 
-                // Join muted/deafened and send no Discord text response.
-                await targetVc.ConnectAsync(selfDeaf: true, selfMute: true);
+                // If already connected in this guild, disconnect first so the stored client is fresh.
+                if (_voiceConnections.TryGetValue(targetVc.Guild.Id, out IAudioClient? existingClient))
+                {
+                    try
+                    {
+                        await existingClient.StopAsync();
+                    }
+                    catch
+                    {
+                    }
+
+                    _voiceConnections.Remove(targetVc.Guild.Id);
+                }
+
+                // Join muted/deafened and keep the returned IAudioClient stored, otherwise it can drop after a few seconds.
+                IAudioClient audioClient = await targetVc.ConnectAsync(selfDeaf: true, selfMute: true);
+                _voiceConnections[targetVc.Guild.Id] = audioClient;
 
                 Console.WriteLine(
                     $"[VOICE] ApolloBot joined VC '{targetVc.Name}' in guild '{targetVc.Guild.Name}'.");
@@ -721,6 +739,28 @@ class Program
             catch (Exception ex)
             {
                 Console.WriteLine($"[VOICE] Failed to join VC: {ex}");
+            }
+
+            return;
+        }
+
+        if (sub == "leave")
+        {
+            try
+            {
+                await message.DeleteAsync();
+
+                if (_voiceConnections.TryGetValue(textChannel.Guild.Id, out IAudioClient? audioClient))
+                {
+                    await audioClient.StopAsync();
+                    _voiceConnections.Remove(textChannel.Guild.Id);
+
+                    Console.WriteLine($"[VOICE] ApolloBot left VC in guild '{textChannel.Guild.Name}'.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VOICE] Failed to leave VC: {ex}");
             }
 
             return;
