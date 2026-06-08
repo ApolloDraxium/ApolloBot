@@ -1571,7 +1571,7 @@ class Program
         var embed = new EmbedBuilder()
             .WithTitle("About ApolloBot")
             .WithDescription("Replaces supported social links with embed-friendly providers and reposts them through a webhook relay.")
-            .AddField("Supported Platforms", "Twitter/X, Reddit, TikTok, Instagram, Bluesky, Threads (experimental)", false)
+            .AddField("Supported Platforms", "Twitter/X, Reddit, TikTok, Instagram, Kick, Bluesky, Threads (experimental)", false)
             .AddField("Features",
                 "• Provider cycling buttons\n" +
                 "• Original poster-only controls\n" +
@@ -1841,7 +1841,7 @@ class Program
 
             if (!_providers.TryGetValue(platform, out List<string>? listedProviders))
             {
-                await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, or threads.");
                 return;
             }
 
@@ -1860,7 +1860,7 @@ class Program
 
         if (!_providers.ContainsKey(targetPlatform))
         {
-            await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, bluesky, or threads.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, or threads.");
             return;
         }
 
@@ -2132,7 +2132,7 @@ class Program
         if (detectedPlatforms.Count == 0)
         {
             await command.RespondAsync(
-                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Bluesky, Threads (experimental).",
+                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Kick, Bluesky, Threads (experimental).",
                 ephemeral: true);
             return;
         }
@@ -2433,7 +2433,7 @@ class Program
     private MessageComponent BuildOwnerDeleteButton(ulong ownerUserId)
     {
         return new ComponentBuilder()
-            .WithButton("Delete", $"owner_delete:{ownerUserId}", ButtonStyle.Danger, emote: new Emoji("🗑️"))
+            .WithButton("Delete", $"owner_delete:{ownerUserId}", ButtonStyle.Danger)
             .Build();
     }
 
@@ -2693,7 +2693,7 @@ class Program
             .WithButton("Next", $"page:{paginatorType}:{page + 1}{ownerSuffix}", ButtonStyle.Primary, disabled: !hasNext);
 
         if (ownerUserId.HasValue)
-            builder.WithButton("Delete", $"owner_delete:{ownerUserId.Value}", ButtonStyle.Danger, emote: new Emoji("🗑️"));
+            builder.WithButton("Delete", $"owner_delete:{ownerUserId.Value}", ButtonStyle.Danger);
 
         return builder.Build();
     }
@@ -3439,6 +3439,7 @@ class Program
             "reddit" => "Fix Embed",
             "tiktok" => "Fix Embed",
             "instagram" => "Fix Embed",
+            "kick" => "Fix Embed",
             "bluesky" => "Fix Embed",
             "threads" => "Fix Embed (Exp)",
             _ => "Fix Embed"
@@ -3453,6 +3454,7 @@ class Program
             "reddit" => "Reddit",
             "tiktok" => "TikTok",
             "instagram" => "Instagram",
+            "kick" => "Kick",
             "bluesky" => "Bluesky",
             "threads" => "Threads",
             _ => platform
@@ -3489,6 +3491,9 @@ class Program
         if (ContainsInstagramLink(text))
             platforms.Add("instagram");
 
+        if (ContainsKickLink(text))
+            platforms.Add("kick");
+
         if (ContainsBlueskyLink(text))
             platforms.Add("bluesky");
 
@@ -3523,6 +3528,9 @@ class Program
 
         if (providerIndexes.ContainsKey("instagram"))
             result = ReplaceInstagramLinks(result, providerIndexes["instagram"], originalAuthorId);
+
+        if (providerIndexes.ContainsKey("kick"))
+            result = ReplaceKickLinks(result, providerIndexes["kick"], originalAuthorId);
 
         if (providerIndexes.ContainsKey("bluesky"))
             result = ReplaceBlueskyLinks(result, providerIndexes["bluesky"], originalAuthorId);
@@ -3589,6 +3597,14 @@ class Program
         return Regex.IsMatch(
             text,
             @"https?://(www\.)?instagram\.com(/|$)",
+            RegexOptions.IgnoreCase);
+    }
+
+    private bool ContainsKickLink(string text)
+    {
+        return Regex.IsMatch(
+            text,
+            @"https?://(www\.)?kick\.com(/|$)",
             RegexOptions.IgnoreCase);
     }
 
@@ -3698,6 +3714,27 @@ class Program
         text = Regex.Replace(
             text,
             @"https?://(www\.)?instagram\.com",
+            $"https://{replacementDomain}",
+            RegexOptions.IgnoreCase);
+
+        return text;
+    }
+
+    private string ReplaceKickLinks(string text, int providerIndex, ulong originalAuthorId)
+    {
+        List<string> kickProviders = GetProvidersForPlatform("kick", originalAuthorId);
+
+        if (kickProviders.Count == 0)
+            return text;
+
+        if (providerIndex < 0 || providerIndex >= kickProviders.Count)
+            providerIndex = 0;
+
+        string replacementDomain = kickProviders[providerIndex];
+
+        text = Regex.Replace(
+            text,
+            @"https?://(www\.)?kick\.com",
             $"https://{replacementDomain}",
             RegexOptions.IgnoreCase);
 
@@ -4369,6 +4406,13 @@ class Program
                 new List<string>
                 {
                     "kkinstagram.com"
+                }
+            },
+            {
+                "kick",
+                new List<string>
+                {
+                    "clkick.com"
                 }
             },
             {
