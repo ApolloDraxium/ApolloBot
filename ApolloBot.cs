@@ -80,6 +80,13 @@ class Program
     private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
     private readonly Dictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
 
+    // Servers in this list are excluded from public/displayed server and user counts.
+    // Useful for bot-listing/advertising servers where regular members cannot use ApolloBot.
+    private readonly HashSet<ulong> _statsExcludedGuildIds = new()
+    {
+        110373943822540800
+    };
+
     // Keeps voice connections alive so Discord.Net does not drop the bot after a few seconds.
     private readonly Dictionary<ulong, IAudioClient> _voiceConnections = new();
     private readonly Dictionary<ulong, CancellationTokenSource> _voiceKeepAliveTokens = new();
@@ -117,6 +124,9 @@ class Program
 
     private static readonly string GuildUsageStatsFilePath =
         Path.Combine(DataDirectory, "guild_usage_stats.json");
+
+    private static readonly string StatsExcludedGuildsFilePath =
+        Path.Combine(DataDirectory, "stats_excluded_guilds.json");
 
     private readonly Dictionary<ulong, GuildActivityState> _guildActivity = new();
     private readonly Dictionary<ulong, GuildUsageStats> _guildUsageStats = new();
@@ -161,6 +171,7 @@ class Program
         LoadPlannedUpdates();
         LoadGuildActivityState();
         LoadGuildUsageStats();
+        LoadStatsExcludedGuilds();
         RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -680,8 +691,28 @@ class Program
 
         if (sub == "servercount")
         {
-            int count = _client?.Guilds.Count ?? 0;
-            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"🌐 Connected to **{count}** server(s).");
+            int visibleCount = GetVisibleServerCount();
+            int totalCount = _client?.Guilds.Count ?? 0;
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                $"🌐 Public stats show **{visibleCount}** server(s). Actual connected servers: **{totalCount}**.");
+            return;
+        }
+
+        if (sub == "exclude")
+        {
+            await HandleStatsExclusionCommandAsync(textChannel, message.Author.Id, parts, exclude: true);
+            return;
+        }
+
+        if (sub == "include")
+        {
+            await HandleStatsExclusionCommandAsync(textChannel, message.Author.Id, parts, exclude: false);
+            return;
+        }
+
+        if (sub == "exclusions")
+        {
+            await SendStatsExclusionsAsync(textChannel, message.Author.Id);
             return;
         }
 
@@ -902,7 +933,7 @@ class Program
                 return;
             }
 
-            var guilds = _client.Guilds
+            var guilds = GetVisibleGuilds()
                 .OrderByDescending(g => g.MemberCount)
                 .ThenBy(g => g.Name)
                 .Select((g, i) => $"**{i + 1}.** {g.Name}\nID: `{g.Id}` | Members: **{g.MemberCount}**")
@@ -922,7 +953,7 @@ class Program
                 page: 0,
                 pageSize: DefaultPageSize,
                 color: Color.Gold,
-                headerText: $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}",
+                headerText: $"**Public Servers:** {GetVisibleServerCount()}\n**Public Users:** {GetVisibleUserCount()}\n**Excluded Servers:** {_statsExcludedGuildIds.Count}",
                 ownerUserId: message.Author.Id);
 
             return;
@@ -948,7 +979,9 @@ class Program
 
         if (sub == "stats")
         {
-            int serverCount = _client?.Guilds.Count ?? 0;
+            int serverCount = GetVisibleServerCount();
+            int actualServerCount = _client?.Guilds.Count ?? 0;
+            int visibleUserCount = GetVisibleUserCount();
             int relayCount = _relayStates.Count;
             int guildSettingsCount = _guildSettings.Count;
             int ignoredUsersCount = _userIgnoreSettings.Count;
@@ -958,7 +991,9 @@ class Program
 
             var embed = new EmbedBuilder()
                 .WithTitle("Bot Stats")
-                .AddField("Servers", serverCount, true)
+                .AddField("Public Servers", serverCount, true)
+                .AddField("Public Users", visibleUserCount, true)
+                .AddField("Actual Servers", actualServerCount, true)
                 .AddField("Relay States", relayCount, true)
                 .AddField("Guild Settings", guildSettingsCount, true)
                 .AddField("Ignored User Profiles", ignoredUsersCount, true)
@@ -975,6 +1010,77 @@ class Program
         }
 
         await SendBotHelp(textChannel, message.Author.Id);
+    }
+
+    private IEnumerable<SocketGuild> GetVisibleGuilds()
+    {
+        if (_client == null)
+            return Enumerable.Empty<SocketGuild>();
+
+        return _client.Guilds.Where(g => !_statsExcludedGuildIds.Contains(g.Id));
+    }
+
+    private int GetVisibleServerCount()
+    {
+        return GetVisibleGuilds().Count();
+    }
+
+    private int GetVisibleUserCount()
+    {
+        return GetVisibleGuilds().Sum(g => g.MemberCount);
+    }
+
+    private async Task HandleStatsExclusionCommandAsync(SocketTextChannel textChannel, ulong ownerUserId, string[] parts, bool exclude)
+    {
+        string action = exclude ? "exclude" : "include";
+
+        if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong guildId))
+        {
+            await SendBotOwnerMessageAsync(textChannel, ownerUserId, $"Usage: `!bot {action} <serverId>`");
+            return;
+        }
+
+        if (exclude)
+        {
+            bool added = _statsExcludedGuildIds.Add(guildId);
+            SaveStatsExcludedGuilds();
+
+            await SendBotOwnerMessageAsync(textChannel, ownerUserId,
+                added
+                    ? $"✅ Excluded server `{guildId}` from public stats."
+                    : $"ℹ️ Server `{guildId}` is already excluded from public stats.");
+        }
+        else
+        {
+            bool removed = _statsExcludedGuildIds.Remove(guildId);
+            SaveStatsExcludedGuilds();
+
+            await SendBotOwnerMessageAsync(textChannel, ownerUserId,
+                removed
+                    ? $"✅ Re-included server `{guildId}` in public stats."
+                    : $"ℹ️ Server `{guildId}` was not excluded from public stats.");
+        }
+    }
+
+    private async Task SendStatsExclusionsAsync(SocketTextChannel textChannel, ulong ownerUserId)
+    {
+        if (_statsExcludedGuildIds.Count == 0)
+        {
+            await SendBotOwnerMessageAsync(textChannel, ownerUserId, "No servers are currently excluded from public stats.");
+            return;
+        }
+
+        var lines = _statsExcludedGuildIds
+            .OrderBy(id => id)
+            .Select(id =>
+            {
+                string name = _client?.GetGuild(id)?.Name ?? "Unknown/not currently connected";
+                return $"• **{name}** — `{id}`";
+            })
+            .ToList();
+
+        await SendBotOwnerMessageAsync(textChannel, ownerUserId,
+            $"**Servers Excluded From Public Stats**\n{string.Join("\n", lines)}");
     }
 
     private async Task KeepSilentVoiceAliveAsync(ulong guildId, IAudioClient audioClient, CancellationToken cancellationToken)
@@ -2735,13 +2841,13 @@ class Program
                         return;
                     }
 
-                    lines = _client.Guilds
+                    lines = GetVisibleGuilds()
                         .OrderByDescending(g => g.MemberCount)
                         .ThenBy(g => g.Name)
                         .Select((g, i) => $"**{i + 1}.** {g.Name}\nID: `{g.Id}` | Members: **{g.MemberCount}**")
                         .ToList();
                     title = "ApolloBot Connected Servers";
-                    headerText = $"**Total Servers:** {_client.Guilds.Count}\n**Total Users:** {_client.Guilds.Sum(g => g.MemberCount)}";
+                    headerText = $"**Public Servers:** {GetVisibleServerCount()}\n**Public Users:** {GetVisibleUserCount()}\n**Excluded Servers:** {_statsExcludedGuildIds.Count}";
                     color = Color.Gold;
                     break;
 
@@ -2818,9 +2924,12 @@ class Program
             "**Core Owner Commands**",
             "`!bot help` – Show this menu",
             "`!bot stats` – Show bot stats and uptime",
-            "`!bot servercount` – Show total connected servers",
+            "`!bot servercount` – Show public and actual connected server counts",
+            "`!bot exclude <serverId>` – Exclude a server from public stats",
+            "`!bot include <serverId>` – Re-include a server in public stats",
+            "`!bot exclusions` – List servers excluded from public stats",
             "`!bot join [voiceChannelId]` – Silently join your current VC or a specific VC by ID",
-            "`!bot servers` – List connected servers with pagination",
+            "`!bot servers` – List public-counted servers with pagination",
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
             "`!bot serverstats <serverId>` – Show detailed stats for one server",
@@ -3097,8 +3206,8 @@ class Program
         if (_client.GetChannel(_ownerLogChannelId) is not IMessageChannel channel)
             return;
 
-        int liveServerCount = _client.Guilds.Count;
-        int liveUserCount = _client.Guilds.Sum(x => x.MemberCount);
+        int liveServerCount = GetVisibleServerCount();
+        int liveUserCount = GetVisibleUserCount();
 
         string ownerText = activity.OwnerId == 0
             ? activity.OwnerName
@@ -4251,8 +4360,8 @@ class Program
 
     private string BuildPublicStatsJson()
     {
-        int serverCount = _client?.Guilds.Count ?? 0;
-        int totalUsers = _client?.Guilds.Sum(g => g.MemberCount) ?? 0;
+        int serverCount = GetVisibleServerCount();
+        int totalUsers = GetVisibleUserCount();
 
         long embedsFixed;
         long currentSessionSeconds;
@@ -4299,6 +4408,51 @@ class Program
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
         });
+    }
+
+    private void SaveStatsExcludedGuilds()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_statsExcludedGuildIds.OrderBy(id => id).ToList(), new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            File.WriteAllText(StatsExcludedGuildsFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save stats excluded guilds: {ex}");
+        }
+    }
+
+    private void LoadStatsExcludedGuilds()
+    {
+        try
+        {
+            if (!File.Exists(StatsExcludedGuildsFilePath))
+            {
+                SaveStatsExcludedGuilds();
+                return;
+            }
+
+            string json = File.ReadAllText(StatsExcludedGuildsFilePath);
+            List<ulong>? loaded = JsonSerializer.Deserialize<List<ulong>>(json);
+
+            if (loaded == null)
+                return;
+
+            _statsExcludedGuildIds.Clear();
+
+            foreach (ulong guildId in loaded)
+                _statsExcludedGuildIds.Add(guildId);
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load stats excluded guilds: {ex}");
+        }
     }
 
     private void LoadPresenceSettings()
