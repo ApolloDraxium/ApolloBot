@@ -385,7 +385,24 @@ class Program
                 .WithRequired(false)
                 .AddChoice("normal", "normal")
                 .AddChoice("advantage", "advantage")
-                .AddChoice("disadvantage", "disadvantage"));
+                .AddChoice("disadvantage", "disadvantage"))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("exhaustion")
+                .WithDescription("2024 exhaustion level (0-6): -2 to the roll per level")
+                .WithType(ApplicationCommandOptionType.Integer)
+                .WithRequired(false)
+                .WithMinValue(0)
+                .WithMaxValue(6))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("resistant")
+                .WithDescription("Halve the final total, rounded down")
+                .WithType(ApplicationCommandOptionType.Boolean)
+                .WithRequired(false))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("vulnerable")
+                .WithDescription("Double the final total")
+                .WithType(ApplicationCommandOptionType.Boolean)
+                .WithRequired(false));
 
         var fixCommand = new SlashCommandBuilder()
             .WithName("fix")
@@ -686,6 +703,198 @@ class Program
             await ApplyPresenceAsync();
 
             await SendBotOwnerMessageAsync(textChannel, message.Author.Id, $"✅ Status updated to **{type} {textValue}**");
+            return;
+        }
+
+        if (sub == "chat")
+        {
+            if (_client == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Client not ready.");
+                return;
+            }
+
+            if (parts.Length < 5 ||
+                !ulong.TryParse(parts[2], out ulong targetGuildId) ||
+                !ulong.TryParse(parts[3], out ulong targetChannelId))
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    "Usage: `!bot chat <ServerID> <ChannelID> <Message>`");
+                return;
+            }
+
+            string chatMessage = string.Join(" ", parts.Skip(4)).Trim();
+            if (string.IsNullOrWhiteSpace(chatMessage))
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Message cannot be empty.");
+                return;
+            }
+
+            if (chatMessage.Length > 2000)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Discord messages cannot exceed 2000 characters.");
+                return;
+            }
+
+            SocketGuild? targetGuild = _client.GetGuild(targetGuildId);
+            if (targetGuild == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"ApolloBot is not connected to server `{targetGuildId}`.");
+                return;
+            }
+
+            SocketTextChannel? targetChannel = targetGuild.GetTextChannel(targetChannelId);
+            if (targetChannel == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"Could not find text channel `{targetChannelId}` in **{targetGuild.Name}**.");
+                return;
+            }
+
+            try
+            {
+                SocketGuildUser? botUser = targetGuild.GetUser(_client.CurrentUser.Id);
+                if (botUser == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        "Could not resolve ApolloBot's permissions in the target server.");
+                    return;
+                }
+
+                ChannelPermissions perms = botUser.GetPermissions(targetChannel);
+                if (!perms.ViewChannel || !perms.SendMessages)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"ApolloBot cannot send messages in <#{targetChannelId}>. " +
+                        $"View Channel: **{perms.ViewChannel}**, Send Messages: **{perms.SendMessages}**.");
+                    return;
+                }
+
+                await targetChannel.SendMessageAsync(chatMessage);
+
+                // Keep the owner command itself out of the test/control channel when possible.
+                try
+                {
+                    await message.DeleteAsync();
+                }
+                catch
+                {
+                }
+
+                Console.WriteLine(
+                    $"[OWNER CHAT] {message.Author} sent a message through ApolloBot to " +
+                    $"'{targetGuild.Name}' ({targetGuild.Id}) / '#{targetChannel.Name}' ({targetChannel.Id}).");
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OWNER CHAT] Failed to send remote chat message: {ex}");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"Failed to send the message to **{targetGuild.Name}** → <#{targetChannel.Id}>.");
+            }
+
+            return;
+        }
+
+        if (sub == "reply")
+        {
+            if (_client == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Client not ready.");
+                return;
+            }
+
+            if (parts.Length < 6 ||
+                !ulong.TryParse(parts[2], out ulong targetGuildId) ||
+                !ulong.TryParse(parts[3], out ulong targetChannelId) ||
+                !ulong.TryParse(parts[4], out ulong targetMessageId))
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    "Usage: `!bot reply <ServerID> <ChannelID> <MessageID> <Message>`");
+                return;
+            }
+
+            string replyText = string.Join(" ", parts.Skip(5)).Trim();
+            if (string.IsNullOrWhiteSpace(replyText))
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Reply cannot be empty.");
+                return;
+            }
+
+            if (replyText.Length > 2000)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Discord messages cannot exceed 2000 characters.");
+                return;
+            }
+
+            SocketGuild? targetGuild = _client.GetGuild(targetGuildId);
+            if (targetGuild == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"ApolloBot is not connected to server `{targetGuildId}`.");
+                return;
+            }
+
+            SocketTextChannel? targetChannel = targetGuild.GetTextChannel(targetChannelId);
+            if (targetChannel == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"Could not find text channel `{targetChannelId}` in **{targetGuild.Name}**.");
+                return;
+            }
+
+            try
+            {
+                SocketGuildUser? botUser = targetGuild.GetUser(_client.CurrentUser.Id);
+                if (botUser == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        "Could not resolve ApolloBot's permissions in the target server.");
+                    return;
+                }
+
+                ChannelPermissions perms = botUser.GetPermissions(targetChannel);
+                if (!perms.ViewChannel || !perms.SendMessages || !perms.ReadMessageHistory)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"ApolloBot cannot reply in <#{targetChannelId}>. " +
+                        $"View Channel: **{perms.ViewChannel}**, Send Messages: **{perms.SendMessages}**, " +
+                        $"Read Message History: **{perms.ReadMessageHistory}**.");
+                    return;
+                }
+
+                IMessage? targetMessage = await targetChannel.GetMessageAsync(targetMessageId);
+                if (targetMessage == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"Could not find message `{targetMessageId}` in <#{targetChannelId}>.");
+                    return;
+                }
+
+                await targetChannel.SendMessageAsync(
+                    text: replyText,
+                    messageReference: new MessageReference(targetMessageId, targetChannelId, targetGuildId));
+
+                try
+                {
+                    await message.DeleteAsync();
+                }
+                catch
+                {
+                }
+
+                Console.WriteLine(
+                    $"[OWNER REPLY] {message.Author} replied through ApolloBot to message {targetMessageId} in " +
+                    $"'{targetGuild.Name}' ({targetGuild.Id}) / '#{targetChannel.Name}' ({targetChannel.Id}).");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OWNER REPLY] Failed to send remote reply: {ex}");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"Failed to reply to message `{targetMessageId}` in **{targetGuild.Name}** → <#{targetChannel.Id}>.");
+            }
+
             return;
         }
 
@@ -2329,6 +2538,9 @@ class Program
     {
         string diceText = "1d20";
         string modeText = "normal";
+        int exhaustionLevel = 0;
+        bool resistant = false;
+        bool vulnerable = false;
 
         foreach (SocketSlashCommandDataOption option in command.Data.Options)
         {
@@ -2337,6 +2549,29 @@ class Program
 
             if (option.Name == "mode" && option.Value is string modeValue && !string.IsNullOrWhiteSpace(modeValue))
                 modeText = modeValue.Trim().ToLowerInvariant();
+
+            if (option.Name == "exhaustion" && option.Value != null)
+                exhaustionLevel = Convert.ToInt32(option.Value, CultureInfo.InvariantCulture);
+
+            if (option.Name == "resistant" && option.Value is bool resistantValue)
+                resistant = resistantValue;
+
+            if (option.Name == "vulnerable" && option.Value is bool vulnerableValue)
+                vulnerable = vulnerableValue;
+        }
+
+        if (resistant && vulnerable)
+        {
+            await command.RespondAsync(
+                "Choose either **resistant** or **vulnerable**, not both.",
+                ephemeral: true);
+            return;
+        }
+
+        if (exhaustionLevel < 0 || exhaustionLevel > 6)
+        {
+            await command.RespondAsync("Exhaustion must be between **0** and **6**.", ephemeral: true);
+            return;
         }
 
         RollParseResult parseResult = ParseRollCommand(diceText);
@@ -2353,6 +2588,9 @@ class Program
 
         request.Advantage = modeText == "advantage";
         request.Disadvantage = modeText == "disadvantage";
+        request.ExhaustionLevel = exhaustionLevel;
+        request.Resistant = resistant;
+        request.Vulnerable = vulnerable;
 
         if ((request.Advantage || request.Disadvantage) &&
             !(request.DiceCount == 1 && request.DieSize == 20))
@@ -2392,6 +2630,19 @@ class Program
 
             embed.AddField("Modifier", modText, true);
         }
+
+        if (request.ExhaustionLevel > 0)
+        {
+            embed.AddField(
+                "Exhaustion",
+                $"Level {request.ExhaustionLevel} (**-{request.ExhaustionLevel * 2}**) ",
+                true);
+        }
+
+        if (request.Resistant)
+            embed.AddField("Resistance", $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
+        else if (request.Vulnerable)
+            embed.AddField("Vulnerability", $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
 
         await command.RespondAsync(embed: embed.Build());
     }
@@ -2505,6 +2756,8 @@ class Program
             ModeLabel = request.Advantage ? "Advantage" : request.Disadvantage ? "Disadvantage" : "Normal"
         };
 
+        int rolledTotal;
+
         if (request.Advantage || request.Disadvantage)
         {
             int rollA = _random.Next(1, request.DieSize + 1);
@@ -2518,21 +2771,34 @@ class Program
                 : Math.Min(rollA, rollB);
 
             result.BaseRollTotal = kept;
-            result.Total = kept + request.Modifier;
-            return result;
+            rolledTotal = kept;
         }
-
-        int total = 0;
-
-        for (int i = 0; i < request.DiceCount; i++)
+        else
         {
-            int roll = _random.Next(1, request.DieSize + 1);
-            result.IndividualRolls.Add(roll);
-            total += roll;
+            int total = 0;
+
+            for (int i = 0; i < request.DiceCount; i++)
+            {
+                int roll = _random.Next(1, request.DieSize + 1);
+                result.IndividualRolls.Add(roll);
+                total += roll;
+            }
+
+            result.BaseRollTotal = total;
+            rolledTotal = total;
         }
 
-        result.BaseRollTotal = total;
-        result.Total = total + request.Modifier;
+        int exhaustionPenalty = request.ExhaustionLevel * 2;
+        int adjustedTotal = rolledTotal + request.Modifier - exhaustionPenalty;
+
+        result.PreDamageAdjustmentTotal = adjustedTotal;
+
+        if (request.Resistant)
+            adjustedTotal = (int)Math.Floor(adjustedTotal / 2.0);
+        else if (request.Vulnerable)
+            adjustedTotal *= 2;
+
+        result.Total = adjustedTotal;
         return result;
     }
 
@@ -2928,6 +3194,8 @@ class Program
             "`!bot exclude <serverId>` – Exclude a server from public stats",
             "`!bot include <serverId>` – Re-include a server in public stats",
             "`!bot exclusions` – List servers excluded from public stats",
+            "`!bot chat <ServerID> <ChannelID> <Message>` – Make ApolloBot speak in a connected server/channel",
+            "`!bot reply <ServerID> <ChannelID> <MessageID> <Message>` – Make ApolloBot reply to a specific message",
             "`!bot join [voiceChannelId]` – Silently join your current VC or a specific VC by ID",
             "`!bot servers` – List public-counted servers with pagination",
             "`!bot topservers` – Show most-used servers by embed fixes",
@@ -2989,6 +3257,9 @@ class Program
         lines.Add("`/roll dice:1d20+6`");
         lines.Add("`/roll dice:1d20 mode:advantage`");
         lines.Add("`/roll dice:1d20+4 mode:disadvantage`");
+        lines.Add("`/roll dice:1d20+7 exhaustion:2`");
+        lines.Add("`/roll dice:2d6+3 resistant:true`");
+        lines.Add("`/roll dice:8d6 vulnerable:true`");
         lines.Add("`/roll dice:2d6+3`");
 
         return lines;
@@ -4934,6 +5205,9 @@ class RollRequest
     public int Modifier { get; set; }
     public bool Advantage { get; set; }
     public bool Disadvantage { get; set; }
+    public int ExhaustionLevel { get; set; }
+    public bool Resistant { get; set; }
+    public bool Vulnerable { get; set; }
 }
 
 class RollResult
@@ -4941,6 +5215,7 @@ class RollResult
     public string RollLabel { get; set; } = "";
     public string ModeLabel { get; set; } = "Normal";
     public int BaseRollTotal { get; set; }
+    public int PreDamageAdjustmentTotal { get; set; }
     public int Total { get; set; }
     public List<int> IndividualRolls { get; set; } = new();
     public List<int> AdvantageRolls { get; set; } = new();
