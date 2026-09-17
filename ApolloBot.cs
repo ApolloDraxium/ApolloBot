@@ -9,6 +9,7 @@ using Discord.Webhook;
 using Discord.WebSocket;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -55,7 +56,7 @@ public static class DataPathHelper
 class Program
 {
     private DiscordSocketClient? _client;
-    private readonly Random _random = new();
+    private readonly Random _random = Random.Shared;
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
@@ -75,10 +76,18 @@ class Program
     private readonly HashSet<ulong> _specialTwitterUsers = new();
     private readonly SortedDictionary<int, string> _plannedUpdates = new();
 
-    private readonly Dictionary<ulong, RelayMessageState> _relayStates = new();
+    private readonly ConcurrentDictionary<ulong, RelayMessageState> _relayStates = new();
+    private readonly ConcurrentDictionary<ulong, RestWebhook> _webhookCache = new();
+    private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _webhookLocks = new();
+    private readonly SemaphoreSlim _relayConcurrency = new(8, 8);
+    private readonly object _relayStateFileLock = new();
+    private readonly object _guildUsageFileLock = new();
+    private int _relayStateSaveScheduled;
+    private int _guildUsageSaveScheduled;
+    private readonly object _cooldownsLock = new();
     private readonly Dictionary<(ulong MessageId, ulong UserId), DateTime> _cooldowns = new();
-    private readonly Dictionary<ulong, GuildSettings> _guildSettings = new();
-    private readonly Dictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
+    private readonly ConcurrentDictionary<ulong, GuildSettings> _guildSettings = new();
+    private readonly ConcurrentDictionary<ulong, UserIgnoreSettings> _userIgnoreSettings = new();
 
     // Servers in this list are excluded from public/displayed server and user counts.
     // Useful for bot-listing/advertising servers where regular members cannot use ApolloBot.
@@ -86,6 +95,10 @@ class Program
     {
         110373943822540800
     };
+
+    // Guilds the owner has explicitly blocked. ApolloBot immediately leaves if added again.
+    private readonly HashSet<ulong> _blockedGuildIds = new();
+    private readonly object _blockedGuildsLock = new();
 
     // Keeps voice connections alive so Discord.Net does not drop the bot after a few seconds.
     private readonly Dictionary<ulong, IAudioClient> _voiceConnections = new();
@@ -128,8 +141,11 @@ class Program
     private static readonly string StatsExcludedGuildsFilePath =
         Path.Combine(DataDirectory, "stats_excluded_guilds.json");
 
-    private readonly Dictionary<ulong, GuildActivityState> _guildActivity = new();
-    private readonly Dictionary<ulong, GuildUsageStats> _guildUsageStats = new();
+    private static readonly string BlockedGuildsFilePath =
+        Path.Combine(DataDirectory, "blocked_guilds.json");
+
+    private readonly ConcurrentDictionary<ulong, GuildActivityState> _guildActivity = new();
+    private readonly ConcurrentDictionary<ulong, GuildUsageStats> _guildUsageStats = new();
 
     private readonly ulong _ownerLogChannelId =
         ulong.TryParse(Environment.GetEnvironmentVariable("OWNER_LOG_CHANNEL_ID"), out ulong parsedOwnerLogChannelId)
@@ -172,6 +188,7 @@ class Program
         LoadGuildActivityState();
         LoadGuildUsageStats();
         LoadStatsExcludedGuilds();
+        LoadBlockedGuilds();
         RegisterShutdownHandlers();
 
         _client = new DiscordSocketClient(new DiscordSocketConfig
@@ -209,7 +226,14 @@ class Program
             while (true)
             {
                 await Task.Delay(TimeSpan.FromSeconds(60));
-                SaveBotStatsHeartbeat();
+                try
+                {
+                    SaveBotStatsHeartbeat();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[HEARTBEAT] Stats heartbeat failed: {ex}");
+                }
             }
         });
 
@@ -248,6 +272,13 @@ class Program
         try
         {
             Console.WriteLine($"[JOIN] Joined guild: {guild.Name} ({guild.Id})");
+
+            if (IsGuildBlocked(guild.Id))
+            {
+                Console.WriteLine($"[BLOCKLIST] Rejoined blocked guild '{guild.Name}' ({guild.Id}); leaving immediately.");
+                await guild.LeaveAsync();
+                return;
+            }
 
             GuildActivityState activity = GetOrCreateGuildActivityState(guild);
             activity.ServerName = guild.Name;
@@ -452,7 +483,14 @@ class Program
         }
     }
 
-    private async Task MessageReceived(SocketMessage message)
+    private Task MessageReceived(SocketMessage message)
+    {
+        // Keep Discord.Net's gateway event loop free. REST/webhook work happens independently.
+        _ = Task.Run(() => ProcessMessageReceivedAsync(message));
+        return Task.CompletedTask;
+    }
+
+    private async Task ProcessMessageReceivedAsync(SocketMessage message)
     {
         if (message.Author.IsBot)
             return;
@@ -535,8 +573,16 @@ class Program
         if (newContent == originalContent)
             return;
 
+        bool relaySlotTaken = false;
         try
         {
+            relaySlotTaken = await _relayConcurrency.WaitAsync(TimeSpan.FromSeconds(15));
+            if (!relaySlotTaken)
+            {
+                Console.WriteLine($"[RELAY] Dropping delayed relay in #{textChannel.Name} ({textChannel.Id}); Discord REST work is saturated.");
+                return;
+            }
+
             List<string> missing = GetLikelyMissingPermissions(textChannel);
             if (missing.Count > 0)
             {
@@ -588,19 +634,60 @@ class Program
         }
         catch (Exception ex)
         {
+            // If the webhook was deleted or became invalid, force a fresh lookup next time.
+            InvalidateWebhookCache(textChannel.Id);
             LogPermissionFailure(textChannel, "Relaying message", ex);
+        }
+        finally
+        {
+            if (relaySlotTaken)
+                _relayConcurrency.Release();
         }
     }
 
     private async Task<RestWebhook?> GetOrCreateWebhookAsync(SocketTextChannel textChannel)
     {
-        IReadOnlyCollection<RestWebhook> webhooks = await textChannel.GetWebhooksAsync();
-        RestWebhook? webhook = webhooks.FirstOrDefault(w => w.Name == WebhookName);
+        if (_webhookCache.TryGetValue(textChannel.Id, out RestWebhook? cached) &&
+            !string.IsNullOrWhiteSpace(cached.Token))
+        {
+            return cached;
+        }
 
-        if (webhook == null)
-            webhook = await textChannel.CreateWebhookAsync(WebhookName);
+        SemaphoreSlim channelLock = _webhookLocks.GetOrAdd(textChannel.Id, _ => new SemaphoreSlim(1, 1));
+        await channelLock.WaitAsync();
 
-        return webhook;
+        try
+        {
+            // Another relay may have populated the cache while this one was waiting.
+            if (_webhookCache.TryGetValue(textChannel.Id, out cached) &&
+                !string.IsNullOrWhiteSpace(cached.Token))
+            {
+                return cached;
+            }
+
+            IReadOnlyCollection<RestWebhook> webhooks = await textChannel.GetWebhooksAsync();
+            RestWebhook? webhook = webhooks.FirstOrDefault(w => w.Name == WebhookName);
+
+            if (webhook == null)
+                webhook = await textChannel.CreateWebhookAsync(WebhookName);
+
+            if (webhook != null && !string.IsNullOrWhiteSpace(webhook.Token))
+            {
+                _webhookCache[textChannel.Id] = webhook;
+                Console.WriteLine($"[WEBHOOK] Cached relay webhook for #{textChannel.Name} ({textChannel.Id}).");
+            }
+
+            return webhook;
+        }
+        finally
+        {
+            channelLock.Release();
+        }
+    }
+
+    private void InvalidateWebhookCache(ulong channelId)
+    {
+        _webhookCache.TryRemove(channelId, out _);
     }
 
     private async Task HandleBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
@@ -898,6 +985,35 @@ class Program
             return;
         }
 
+        if (sub == "unblock")
+        {
+            if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong guildIdToUnblock))
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Usage: `!bot unblock <ServerID>`");
+                return;
+            }
+
+            bool removed = RemoveBlockedGuild(guildIdToUnblock);
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                removed ? $"Removed `{guildIdToUnblock}` from ApolloBot's blocklist."
+                        : $"`{guildIdToUnblock}` was not on ApolloBot's blocklist.");
+            return;
+        }
+
+        if (sub == "blocklist")
+        {
+            List<ulong> blocked;
+            lock (_blockedGuildsLock)
+                blocked = _blockedGuildIds.OrderBy(id => id).ToList();
+
+            string text = blocked.Count == 0
+                ? "ApolloBot's server blocklist is empty."
+                : "**Blocked server IDs:**\n" + string.Join("\n", blocked.Select(id => $"• `{id}`"));
+
+            await SendBotOwnerMessageAsync(textChannel, message.Author.Id, text);
+            return;
+        }
+
         if (sub == "servercount")
         {
             int visibleCount = GetVisibleServerCount();
@@ -1055,6 +1171,45 @@ class Program
 
         if (sub == "leave")
         {
+            // !bot leave <ServerID> removes ApolloBot from that guild and blocklists it.
+            // !bot leave with no ID keeps the existing voice-channel leave behaviour.
+            if (parts.Length >= 3)
+            {
+                if (!ulong.TryParse(parts[2], out ulong guildIdToLeave))
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        "Usage: `!bot leave <ServerID>` (or `!bot leave` to leave voice)");
+                    return;
+                }
+
+                SocketGuild? guildToLeave = _client?.GetGuild(guildIdToLeave);
+                if (guildToLeave == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"ApolloBot is not currently connected to server `{guildIdToLeave}`.");
+                    return;
+                }
+
+                AddBlockedGuild(guildIdToLeave);
+
+                try
+                {
+                    string guildName = guildToLeave.Name;
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"Leaving **{guildName}** (`{guildIdToLeave}`) and adding it to ApolloBot's blocklist.");
+                    await guildToLeave.LeaveAsync();
+                    Console.WriteLine($"[OWNER LEAVE] Left and blocklisted '{guildName}' ({guildIdToLeave}).");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[OWNER LEAVE] Failed to leave guild {guildIdToLeave}: {ex}");
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"I blocklisted `{guildIdToLeave}`, but Discord returned an error while I tried to leave it.");
+                }
+
+                return;
+            }
+
             try
             {
                 await message.DeleteAsync();
@@ -2892,22 +3047,30 @@ class Program
         TimeSpan buttonCooldown = TimeSpan.FromSeconds(Math.Clamp(stateSettings.ButtonCooldownSeconds, 1, 30));
         (ulong MessageId, ulong UserId) cooldownKey = (component.Message.Id, component.User.Id);
 
-        if (_cooldowns.TryGetValue(cooldownKey, out DateTime lastUsed))
+        double? cooldownRemaining = null;
+        lock (_cooldownsLock)
         {
-            TimeSpan elapsed = DateTime.UtcNow - lastUsed;
-
-            if (elapsed < buttonCooldown)
+            if (_cooldowns.TryGetValue(cooldownKey, out DateTime lastUsed))
             {
-                double remaining = (buttonCooldown - elapsed).TotalSeconds;
-                await component.RespondAsync(
-                    $"Slow down a bit 😅 Try again in {remaining:F1}s.",
-                    ephemeral: true);
-                return;
+                TimeSpan elapsed = DateTime.UtcNow - lastUsed;
+                if (elapsed < buttonCooldown)
+                    cooldownRemaining = (buttonCooldown - elapsed).TotalSeconds;
+            }
+
+            if (!cooldownRemaining.HasValue)
+            {
+                _cooldowns[cooldownKey] = DateTime.UtcNow;
+                CleanupOldCooldownsUnsafe();
             }
         }
 
-        _cooldowns[cooldownKey] = DateTime.UtcNow;
-        CleanupOldCooldowns();
+        if (cooldownRemaining.HasValue)
+        {
+            await component.RespondAsync(
+                $"Slow down a bit 😅 Try again in {cooldownRemaining.Value:F1}s.",
+                ephemeral: true);
+            return;
+        }
 
         try
         {
@@ -2929,7 +3092,7 @@ class Program
                 var deleteClient = new DiscordWebhookClient(state.WebhookId, state.WebhookToken);
                 await deleteClient.DeleteMessageAsync(component.Message.Id);
 
-                _relayStates.Remove(component.Message.Id);
+                _relayStates.TryRemove(component.Message.Id, out _);
                 SaveRelayStates();
 
                 await component.FollowupAsync("Deleted your relayed message.", ephemeral: true);
@@ -3196,7 +3359,11 @@ class Program
             "`!bot exclusions` – List servers excluded from public stats",
             "`!bot chat <ServerID> <ChannelID> <Message>` – Make ApolloBot speak in a connected server/channel",
             "`!bot reply <ServerID> <ChannelID> <MessageID> <Message>` – Make ApolloBot reply to a specific message",
+            "`!bot leave <ServerID>` – Leave and blocklist a server",
+            "`!bot unblock <ServerID>` – Remove a server from the blocklist",
+            "`!bot blocklist` – Show blocked server IDs",
             "`!bot join [voiceChannelId]` – Silently join your current VC or a specific VC by ID",
+            "`!bot leave` – Leave the current voice channel",
             "`!bot servers` – List public-counted servers with pagination",
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
@@ -3551,19 +3718,27 @@ class Program
 
     private void SaveGuildUsageStats()
     {
-        try
-        {
-            string json = JsonSerializer.Serialize(_guildUsageStats, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
+        if (Interlocked.Exchange(ref _guildUsageSaveScheduled, 1) != 0)
+            return;
 
-            File.WriteAllText(GuildUsageStatsFilePath, json);
-        }
-        catch (Exception ex)
+        _ = Task.Run(async () =>
         {
-            Console.WriteLine($"Failed to save guild usage stats: {ex}");
-        }
+            try
+            {
+                await Task.Delay(500);
+                string json = JsonSerializer.Serialize(_guildUsageStats.ToDictionary(x => x.Key, x => x.Value), new JsonSerializerOptions { WriteIndented = true });
+                lock (_guildUsageFileLock)
+                    File.WriteAllText(GuildUsageStatsFilePath, json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to save guild usage stats: {ex}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _guildUsageSaveScheduled, 0);
+            }
+        });
     }
 
     private void LoadGuildUsageStats()
@@ -4193,20 +4368,27 @@ class Program
 
     private void SaveRelayStates()
     {
-        try
-        {
-            var options = new JsonSerializerOptions
-            {
-                WriteIndented = true
-            };
+        if (Interlocked.Exchange(ref _relayStateSaveScheduled, 1) != 0)
+            return;
 
-            string json = JsonSerializer.Serialize(_relayStates, options);
-            File.WriteAllText(StateFilePath, json);
-        }
-        catch (Exception ex)
+        _ = Task.Run(async () =>
         {
-            Console.WriteLine($"Failed to save relay states: {ex}");
-        }
+            try
+            {
+                await Task.Delay(500);
+                string json = JsonSerializer.Serialize(_relayStates.ToDictionary(x => x.Key, x => x.Value), new JsonSerializerOptions { WriteIndented = true });
+                lock (_relayStateFileLock)
+                    File.WriteAllText(StateFilePath, json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to save relay states: {ex}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _relayStateSaveScheduled, 0);
+            }
+        });
     }
 
     private void LoadRelayStates()
@@ -4681,6 +4863,79 @@ class Program
         });
     }
 
+    private bool IsGuildBlocked(ulong guildId)
+    {
+        lock (_blockedGuildsLock)
+            return _blockedGuildIds.Contains(guildId);
+    }
+
+    private void AddBlockedGuild(ulong guildId)
+    {
+        lock (_blockedGuildsLock)
+            _blockedGuildIds.Add(guildId);
+
+        SaveBlockedGuilds();
+    }
+
+    private bool RemoveBlockedGuild(ulong guildId)
+    {
+        bool removed;
+        lock (_blockedGuildsLock)
+            removed = _blockedGuildIds.Remove(guildId);
+
+        if (removed)
+            SaveBlockedGuilds();
+
+        return removed;
+    }
+
+    private void SaveBlockedGuilds()
+    {
+        try
+        {
+            List<ulong> blocked;
+            lock (_blockedGuildsLock)
+                blocked = _blockedGuildIds.OrderBy(id => id).ToList();
+
+            string json = JsonSerializer.Serialize(blocked, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(BlockedGuildsFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save blocked guilds: {ex}");
+        }
+    }
+
+    private void LoadBlockedGuilds()
+    {
+        try
+        {
+            if (!File.Exists(BlockedGuildsFilePath))
+            {
+                SaveBlockedGuilds();
+                return;
+            }
+
+            string json = File.ReadAllText(BlockedGuildsFilePath);
+            List<ulong>? loaded = JsonSerializer.Deserialize<List<ulong>>(json);
+            if (loaded == null)
+                return;
+
+            lock (_blockedGuildsLock)
+            {
+                _blockedGuildIds.Clear();
+                foreach (ulong guildId in loaded)
+                    _blockedGuildIds.Add(guildId);
+            }
+
+            Console.WriteLine($"Loaded {loaded.Count} blocked guild(s).");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load blocked guilds: {ex}");
+        }
+    }
+
     private void SaveStatsExcludedGuilds()
     {
         try
@@ -5139,7 +5394,7 @@ class Program
         }
     }
 
-    private void CleanupOldCooldowns()
+    private void CleanupOldCooldownsUnsafe()
     {
         DateTime cutoff = DateTime.UtcNow - CooldownRetention;
 
