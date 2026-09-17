@@ -3508,8 +3508,8 @@ class Program
             return;
         }
 
-        bool removedUsage = _guildUsageStats.Remove(guildId);
-        bool removedActivity = _guildActivity.Remove(guildId);
+        bool removedUsage = _guildUsageStats.TryRemove(guildId, out _);
+        bool removedActivity = _guildActivity.TryRemove(guildId, out _);
 
         SaveGuildUsageStats();
         SaveGuildActivityState();
