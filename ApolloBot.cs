@@ -1773,7 +1773,7 @@ class Program
 
         if (sub == "serverstats")
         {
-            await SendPublicServerStatsAsync(textChannel);
+            await SendPublicServerStatsAsync(message, textChannel);
             return;
         }
 
