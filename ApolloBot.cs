@@ -1986,15 +1986,15 @@ class Program
         string avatarUrl = targetUser?.GetAvatarUrl(ImageFormat.Auto, 256) ?? targetUser?.GetDefaultAvatarUrl() ?? "";
 
         Embed embed = BuildUserStatsEmbed(targetUserId, displayName, avatarUrl);
-        MessageComponent components = BuildStatsProfileComponents("user", targetUserId);
+        MessageComponent components = BuildStatsProfileComponents("user", targetUserId, message.Author.Id);
 
         await channel.SendMessageAsync(embed: embed, components: components);
     }
 
-    private async Task SendPublicServerStatsAsync(SocketTextChannel channel)
+    private async Task SendPublicServerStatsAsync(SocketUserMessage message, SocketTextChannel channel)
     {
         Embed embed = BuildServerStatsEmbed(channel.Guild);
-        MessageComponent components = BuildStatsProfileComponents("server", channel.Guild.Id);
+        MessageComponent components = BuildStatsProfileComponents("server", channel.Guild.Id, message.Author.Id);
 
         await channel.SendMessageAsync(embed: embed, components: components);
     }
@@ -2030,7 +2030,7 @@ class Program
                 $"**Favourite Platform:** {favouritePlatform}\n" +
                 $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
             .AddField("🏆 Achievements",
-                $"**{regularUnlocked} / {regularTotal}** achievements unlocked\n" +
+                $"**{regularUnlocked} / {regularTotal}** regular achievements unlocked\n" +
                 BuildAchievementPreview(achievements), false)
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
             .WithCurrentTimestamp();
@@ -2089,17 +2089,19 @@ class Program
         return embed.Build();
     }
 
-    private MessageComponent BuildStatsProfileComponents(string scope, ulong entityId)
+    private MessageComponent BuildStatsProfileComponents(string scope, ulong entityId, ulong ownerUserId)
     {
         return new ComponentBuilder()
-            .WithButton("View Achievements", $"stats_achievements:{scope}:{entityId}", ButtonStyle.Secondary, new Emoji("🏅"))
+            .WithButton("View Achievements", $"stats_achievements:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("🏅"))
+            .WithButton("Close", $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
             .Build();
     }
 
-    private MessageComponent BuildAchievementComponents(string scope, ulong entityId)
+    private MessageComponent BuildAchievementComponents(string scope, ulong entityId, ulong ownerUserId)
     {
         return new ComponentBuilder()
-            .WithButton("Back to Profile", $"stats_profile:{scope}:{entityId}", ButtonStyle.Secondary, new Emoji("◀️"))
+            .WithButton("Back to Profile", $"stats_profile:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("◀️"))
+            .WithButton("Close", $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
             .Build();
     }
 
@@ -2138,7 +2140,7 @@ class Program
     private string BuildAchievementPreview(List<string> achievements)
     {
         if (achievements.Count == 0)
-            return "No achievements unlocked yet.";
+            return "No regular achievements unlocked yet.";
 
         return string.Join("\n", achievements
             .Where(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal))
@@ -2238,7 +2240,7 @@ class Program
             .WithTitle($"🏆 {displayName} — Achievements")
             .WithDescription(string.Join("\n\n", lines))
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
-            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 achievements unlocked")
+            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 regular achievements unlocked")
             .Build();
     }
 
@@ -3336,14 +3338,30 @@ class Program
     private async Task HandleStatsProfileButtonAsync(SocketMessageComponent component)
     {
         string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 3 || !ulong.TryParse(parts[2], out ulong entityId))
+        if (parts.Length != 4 ||
+            !ulong.TryParse(parts[2], out ulong entityId) ||
+            !ulong.TryParse(parts[3], out ulong ownerUserId))
         {
             await component.RespondAsync("That profile button is no longer valid.", ephemeral: true);
             return;
         }
 
+        if (component.User.Id != ownerUserId)
+        {
+            await component.RespondAsync(
+                "These profile buttons belong to the person who opened this menu. Run `!ab UserStats` or `!ab ServerStats` to open your own.",
+                ephemeral: true);
+            return;
+        }
+
         string action = parts[0];
         string scope = parts[1];
+
+        if (action == "stats_close")
+        {
+            await component.Message.DeleteAsync();
+            return;
+        }
 
         if (scope == "user")
         {
@@ -3356,8 +3374,8 @@ class Program
                 : BuildUserStatsEmbed(entityId, displayName, avatarUrl);
 
             MessageComponent components = action == "stats_achievements"
-                ? BuildAchievementComponents("user", entityId)
-                : BuildStatsProfileComponents("user", entityId);
+                ? BuildAchievementComponents("user", entityId, ownerUserId)
+                : BuildStatsProfileComponents("user", entityId, ownerUserId);
 
             await component.UpdateAsync(msg =>
             {
@@ -3381,8 +3399,8 @@ class Program
                 : BuildServerStatsEmbed(guild);
 
             MessageComponent components = action == "stats_achievements"
-                ? BuildAchievementComponents("server", entityId)
-                : BuildStatsProfileComponents("server", entityId);
+                ? BuildAchievementComponents("server", entityId, ownerUserId)
+                : BuildStatsProfileComponents("server", entityId, ownerUserId);
 
             await component.UpdateAsync(msg =>
             {
@@ -3412,7 +3430,8 @@ class Program
         }
 
         if (customId.StartsWith("stats_achievements:", StringComparison.Ordinal) ||
-            customId.StartsWith("stats_profile:", StringComparison.Ordinal))
+            customId.StartsWith("stats_profile:", StringComparison.Ordinal) ||
+            customId.StartsWith("stats_close:", StringComparison.Ordinal))
         {
             await HandleStatsProfileButtonAsync(component);
             return;
