@@ -2007,7 +2007,7 @@ class Program
         int serverCount = stats?.GuildIds?.Count ?? 0;
         List<string> achievements = GetUserAchievements(userId, stats);
         int regularUnlocked = GetUserRegularAchievementCount(userId, stats);
-        const int regularTotal = 6;
+        const int regularTotal = 10;
 
         string discordSince = SnowflakeUtils.FromSnowflake(userId).UtcDateTime.ToString("dd MMM yyyy");
         string firstUse = stats?.FirstUsedAtUtc != default
@@ -2160,9 +2160,13 @@ class Program
             unlocked.Add("👑 **ApolloBot Creator** — `UNIQUE` — The one who started it all.");
 
         if (fixes >= 1) unlocked.Add("🔧 **First Fix!** — `COMMON`");
-        if (fixes >= 100) unlocked.Add("🩺 **Link Doctor** — `UNCOMMON`");
-        if (fixes >= 1_000) unlocked.Add("🚀 **Apollo Addict** — `RARE`");
-        if (fixes >= 10_000) unlocked.Add("🌐 **Terminally Online** — `LEGENDARY`");
+        if (fixes >= 10) unlocked.Add("🛠️ **Getting the Hang of It** — `COMMON`");
+        if (fixes >= 25) unlocked.Add("🔗 **Link Regular** — `UNCOMMON`");
+        if (fixes >= 50) unlocked.Add("🩺 **Link Doctor** — `UNCOMMON`");
+        if (fixes >= 100) unlocked.Add("🚀 **Embed Fixer** — `RARE`");
+        if (fixes >= 250) unlocked.Add("📡 **Embed Enthusiast** — `EPIC`");
+        if (fixes >= 500) unlocked.Add("🌐 **Terminally Online** — `LEGENDARY`");
+        if (fixes >= 1_000) unlocked.Add("💀 **Touch Grass** — `LEGENDARY`");
 
         HashSet<string> platforms = stats?.PlatformUsage?
             .Where(x => x.Value > 0)
@@ -2209,9 +2213,13 @@ class Program
             lines.Add("👑 **ApolloBot Creator** `UNIQUE`\n*The one who started it all.*\n✓ Special • Unobtainable");
 
         lines.Add(FormatAchievementEntry("🔧", "First Fix!", "COMMON", "Complete your first embed fix.", fixes, 1));
-        lines.Add(FormatAchievementEntry("🩺", "Link Doctor", "UNCOMMON", "Complete 100 embed fixes.", fixes, 100));
-        lines.Add(FormatAchievementEntry("🚀", "Apollo Addict", "RARE", "Complete 1,000 embed fixes.", fixes, 1_000));
-        lines.Add(FormatAchievementEntry("🌐", "Terminally Online", "LEGENDARY", "Complete 10,000 embed fixes.", fixes, 10_000));
+        lines.Add(FormatAchievementEntry("🛠️", "Getting the Hang of It", "COMMON", "Complete 10 embed fixes.", fixes, 10));
+        lines.Add(FormatAchievementEntry("🔗", "Link Regular", "UNCOMMON", "Complete 25 embed fixes.", fixes, 25));
+        lines.Add(FormatAchievementEntry("🩺", "Link Doctor", "UNCOMMON", "Complete 50 embed fixes.", fixes, 50));
+        lines.Add(FormatAchievementEntry("🚀", "Embed Fixer", "RARE", "Complete 100 embed fixes.", fixes, 100));
+        lines.Add(FormatAchievementEntry("📡", "Embed Enthusiast", "EPIC", "Complete 250 embed fixes.", fixes, 250));
+        lines.Add(FormatAchievementEntry("🌐", "Terminally Online", "LEGENDARY", "Complete 500 embed fixes.", fixes, 500));
+        lines.Add(FormatAchievementEntry("💀", "Touch Grass", "LEGENDARY", "Complete 1,000 embed fixes.", fixes, 1_000));
 
         bool hatTrick = new[] { "twitter", "tiktok", "instagram" }.All(p =>
             stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count > 0);
@@ -2225,7 +2233,7 @@ class Program
             .WithTitle($"🏆 {displayName} — Achievements")
             .WithDescription(string.Join("\n\n", lines))
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
-            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 6 regular achievements unlocked")
+            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 regular achievements unlocked")
             .Build();
     }
 
