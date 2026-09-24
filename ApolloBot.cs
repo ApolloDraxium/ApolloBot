@@ -2355,7 +2355,7 @@ class Program
 
         var lines = new List<string>
         {
-            "👋 **Welcome Apollo!** `COMMON`\nApolloBot joined the server.\n✓ Unlocked",
+            "👋 **Welcome to Apollo!** `COMMON`\nApolloBot joined the server.\n✓ Unlocked",
             FormatAchievementEntry("🔧", "Getting Started", "COMMON", "Complete 25 embed fixes.", fixes, 25),
             FormatAchievementEntry("🔗", "Link Fixers", "COMMON", "Complete 100 embed fixes.", fixes, 100),
             FormatAchievementEntry("🛠️", "Regular Customers", "UNCOMMON", "Complete 250 embed fixes.", fixes, 250),
