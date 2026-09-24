@@ -892,6 +892,110 @@ class Program
             return;
         }
 
+        if (sub == "delete")
+        {
+            if (_client == null)
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "Client not ready.");
+                return;
+            }
+
+            SocketGuild? targetGuild;
+            SocketTextChannel? targetChannel;
+            ulong targetMessageId;
+
+            if (parts.Length == 3 && ulong.TryParse(parts[2], out targetMessageId))
+            {
+                targetGuild = textChannel.Guild;
+                targetChannel = textChannel;
+            }
+            else if (parts.Length == 5 &&
+                     ulong.TryParse(parts[2], out ulong targetGuildId) &&
+                     ulong.TryParse(parts[3], out ulong targetChannelId) &&
+                     ulong.TryParse(parts[4], out targetMessageId))
+            {
+                targetGuild = _client.GetGuild(targetGuildId);
+                if (targetGuild == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"ApolloBot is not connected to server `{targetGuildId}`.");
+                    return;
+                }
+
+                targetChannel = targetGuild.GetTextChannel(targetChannelId);
+                if (targetChannel == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"Could not find text channel `{targetChannelId}` in **{targetGuild.Name}**.");
+                    return;
+                }
+            }
+            else
+            {
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    "Usage:\n`!bot delete <MessageID>`\n`!bot delete <ServerID> <ChannelID> <MessageID>`");
+                return;
+            }
+
+            try
+            {
+                SocketGuildUser? botUser = targetGuild.GetUser(_client.CurrentUser.Id);
+                if (botUser == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        "Could not resolve ApolloBot's permissions in the target server.");
+                    return;
+                }
+
+                ChannelPermissions perms = botUser.GetPermissions(targetChannel);
+                if (!perms.ViewChannel || !perms.ReadMessageHistory)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"ApolloBot cannot access message history in <#{targetChannel.Id}>. " +
+                        $"View Channel: **{perms.ViewChannel}**, Read Message History: **{perms.ReadMessageHistory}**.");
+                    return;
+                }
+
+                IMessage? targetMessage = await targetChannel.GetMessageAsync(targetMessageId);
+                if (targetMessage == null)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"Could not find message `{targetMessageId}` in <#{targetChannel.Id}>.");
+                    return;
+                }
+
+                if (targetMessage.Author.Id != _client.CurrentUser.Id)
+                {
+                    await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                        $"Refusing to delete message `{targetMessageId}` because it was not sent by ApolloBot.");
+                    return;
+                }
+
+                await targetMessage.DeleteAsync();
+
+                try
+                {
+                    if (message.Id != targetMessageId)
+                        await message.DeleteAsync();
+                }
+                catch
+                {
+                }
+
+                Console.WriteLine(
+                    $"[OWNER DELETE] {message.Author} deleted ApolloBot message {targetMessageId} from " +
+                    $"'{targetGuild.Name}' ({targetGuild.Id}) / '#{targetChannel.Name}' ({targetChannel.Id}).");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OWNER DELETE] Failed to delete message: {ex}");
+                await SendBotOwnerMessageAsync(textChannel, message.Author.Id,
+                    $"Failed to delete ApolloBot message `{targetMessageId}` from **{targetGuild.Name}** → <#{targetChannel.Id}>.");
+            }
+
+            return;
+        }
+
         if (sub == "reply")
         {
             if (_client == null)
@@ -1669,7 +1773,7 @@ class Program
 
         if (sub == "serverstats")
         {
-            await SendPublicServerStatsAsync(message, textChannel);
+            await SendPublicServerStatsAsync(textChannel);
             return;
         }
 
@@ -3788,6 +3892,8 @@ class Program
             "`!bot exclusions` – List servers excluded from public stats",
             "`!bot chat <ServerID> <ChannelID> <Message>` – Make ApolloBot speak in a connected server/channel",
             "`!bot reply <ServerID> <ChannelID> <MessageID> <Message>` – Make ApolloBot reply to a specific message",
+            "`!bot delete <MessageID>` – Delete an ApolloBot message in the current channel",
+            "`!bot delete <ServerID> <ChannelID> <MessageID>` – Delete an ApolloBot message remotely",
             "`!bot leave <ServerID>` – Leave and blocklist a server",
             "`!bot unblock <ServerID>` – Remove a server from the blocklist",
             "`!bot blocklist` – Show blocked server IDs",
