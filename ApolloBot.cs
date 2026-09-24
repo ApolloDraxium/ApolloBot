@@ -2030,7 +2030,7 @@ class Program
                 $"**Favourite Platform:** {favouritePlatform}\n" +
                 $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
             .AddField("🏆 Achievements",
-                $"**{regularUnlocked} / {regularTotal}** regular achievements unlocked\n" +
+                $"**{regularUnlocked} / {regularTotal}** achievements unlocked\n" +
                 BuildAchievementPreview(achievements), false)
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
             .WithCurrentTimestamp();
@@ -2138,7 +2138,7 @@ class Program
     private string BuildAchievementPreview(List<string> achievements)
     {
         if (achievements.Count == 0)
-            return "No regular achievements unlocked yet.";
+            return "No achievements unlocked yet.";
 
         return string.Join("\n", achievements
             .Where(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal))
@@ -2238,7 +2238,7 @@ class Program
             .WithTitle($"🏆 {displayName} — Achievements")
             .WithDescription(string.Join("\n\n", lines))
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
-            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 regular achievements unlocked")
+            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 achievements unlocked")
             .Build();
     }
 
