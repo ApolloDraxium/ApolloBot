@@ -2293,11 +2293,11 @@ class Program
         var unlocked = new List<string>();
         long fixes = stats?.EmbedFixCount ?? 0;
 
-        unlocked.Add("👋 **Welcome Apollo!** — `COMMON`");
+        unlocked.Add("👋 **Welcome to ApolloBot!** — `COMMON`");
         if (fixes >= 25) unlocked.Add("🔧 **Getting Started** — `COMMON`");
         if (fixes >= 100) unlocked.Add("🔗 **Link Fixers** — `COMMON`");
         if (fixes >= 250) unlocked.Add("🛠️ **Regular Customers** — `UNCOMMON`");
-        if (fixes >= 500) unlocked.Add("⭐ **Apollo Approved** — `UNCOMMON`");
+        if (fixes >= 500) unlocked.Add("⭐ **ApolloBot Approved** — `UNCOMMON`");
         if (fixes >= 1_000) unlocked.Add("🏭 **Link Factory** — `RARE`");
         if (fixes >= 2_000) unlocked.Add("⚙️ **Industrial Scale** — `EPIC`");
         if (fixes >= 2_500) unlocked.Add("🤨 **Seriously?** — `EPIC`");
@@ -2359,7 +2359,7 @@ class Program
             FormatAchievementEntry("🔧", "Getting Started", "COMMON", "Complete 25 embed fixes.", fixes, 25),
             FormatAchievementEntry("🔗", "Link Fixers", "COMMON", "Complete 100 embed fixes.", fixes, 100),
             FormatAchievementEntry("🛠️", "Regular Customers", "UNCOMMON", "Complete 250 embed fixes.", fixes, 250),
-            FormatAchievementEntry("⭐", "Apollo Approved", "UNCOMMON", "Complete 500 embed fixes.", fixes, 500),
+            FormatAchievementEntry("⭐", "ApolloBot Approved", "UNCOMMON", "Complete 500 embed fixes.", fixes, 500),
             FormatAchievementEntry("🏭", "Link Factory", "RARE", "Complete 1,000 embed fixes.", fixes, 1_000),
             FormatAchievementEntry("⚙️", "Industrial Scale", "EPIC", "Complete 2,000 embed fixes.", fixes, 2_000),
             FormatAchievementEntry("🤨", "Seriously?", "EPIC", "Complete 2,500 embed fixes.", fixes, 2_500),
