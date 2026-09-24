@@ -163,10 +163,12 @@ class Program
 
     private BotPresenceSettings _presenceSettings = new();
 
+    private const ulong ApolloBotCreatorUserId = 846147700700610600;
+
     private static readonly HashSet<ulong> BotOwnerIds = new()
     {
         127877921464385537,
-        846147700700610600
+        ApolloBotCreatorUserId
     };
 
     private static readonly TimeSpan CooldownRetention = TimeSpan.FromMinutes(10);
@@ -1983,61 +1985,170 @@ class Program
         string displayName = targetUser?.GlobalName ?? targetUser?.Username ?? $"User {targetUserId}";
         string avatarUrl = targetUser?.GetAvatarUrl(ImageFormat.Auto, 256) ?? targetUser?.GetDefaultAvatarUrl() ?? "";
 
-        _userUsageStats.TryGetValue(targetUserId, out UserUsageStats? stats);
-        long totalFixes = stats?.EmbedFixCount ?? 0;
-        int serverCount = stats?.GuildIds?.Count ?? 0;
-        string activity = FormatPlatformActivity(stats?.PlatformUsage);
-        List<string> achievements = GetUserAchievements(targetUserId, stats);
+        Embed embed = BuildUserStatsEmbed(targetUserId, displayName, avatarUrl);
+        MessageComponent components = BuildStatsProfileComponents("user", targetUserId);
 
-        var embed = new EmbedBuilder()
-            .WithTitle($"ApolloBot User Stats — {displayName}")
-            .AddField("Embed Fixes", totalFixes, true)
-            .AddField("Servers Used", serverCount, true)
-            .AddField("Embed Activity", activity, false)
-            .AddField("Achievements", achievements.Count == 0 ? "None unlocked yet." : string.Join("\n", achievements), false)
-            .WithColor(targetUserId == 127877921464385537 ? Color.Gold : Color.Teal)
-            .WithCurrentTimestamp();
-
-        if (!string.IsNullOrWhiteSpace(avatarUrl))
-            embed.WithThumbnailUrl(avatarUrl);
-
-        await channel.SendMessageAsync(embed: embed.Build());
+        await channel.SendMessageAsync(embed: embed, components: components);
     }
 
     private async Task SendPublicServerStatsAsync(SocketTextChannel channel)
     {
-        _guildUsageStats.TryGetValue(channel.Guild.Id, out GuildUsageStats? stats);
+        Embed embed = BuildServerStatsEmbed(channel.Guild);
+        MessageComponent components = BuildStatsProfileComponents("server", channel.Guild.Id);
+
+        await channel.SendMessageAsync(embed: embed, components: components);
+    }
+
+    private Embed BuildUserStatsEmbed(ulong userId, string displayName, string avatarUrl)
+    {
+        _userUsageStats.TryGetValue(userId, out UserUsageStats? stats);
 
         long totalFixes = stats?.EmbedFixCount ?? 0;
+        int serverCount = stats?.GuildIds?.Count ?? 0;
+        List<string> achievements = GetUserAchievements(userId, stats);
+        int regularUnlocked = GetUserRegularAchievementCount(userId, stats);
+        const int regularTotal = 6;
+
+        string discordSince = SnowflakeUtils.FromSnowflake(userId).UtcDateTime.ToString("dd MMM yyyy");
+        string firstUse = stats?.FirstUsedAtUtc != default
+            ? stats!.FirstUsedAtUtc.ToString("dd MMM yyyy")
+            : "Not recorded yet";
+
+        string favouritePlatform = GetFavouritePlatform(stats?.PlatformUsage);
         string activity = FormatPlatformActivity(stats?.PlatformUsage);
-        List<string> achievements = GetServerAchievements(stats);
 
         var embed = new EmbedBuilder()
-            .WithTitle($"ApolloBot Server Stats — {channel.Guild.Name}")
-            .AddField("Members", channel.Guild.MemberCount, true)
-            .AddField("Embed Fixes", totalFixes, true)
-            .AddField("Embed Activity", activity, false)
-            .AddField("Achievements", achievements.Count == 0 ? "None unlocked yet." : string.Join("\n", achievements), false)
+            .WithTitle($"🛰️ ApolloBot User Profile — {displayName}")
+            .WithDescription($"**User ID:** `{userId}`")
+            .AddField("👤 User Information",
+                $"**Discord Since:** {discordSince}\n" +
+                $"**First Apollo Use:** {firstUse}\n" +
+                $"**Servers Used:** {serverCount}", false)
+            .AddField("🔗 Embed Activity",
+                $"**Total Fixes:** {totalFixes}\n{activity}", false)
+            .AddField("📊 Activity",
+                $"**Favourite Platform:** {favouritePlatform}\n" +
+                $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
+            .AddField("🏆 Achievements",
+                $"**{regularUnlocked} / {regularTotal}** regular achievements unlocked\n" +
+                BuildAchievementPreview(achievements), false)
+            .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
+            .WithCurrentTimestamp();
+
+        if (userId == ApolloBotCreatorUserId)
+        {
+            embed.AddField("👑 Special Achievement",
+                "**ApolloBot Creator** — `UNIQUE`\n*The one who started it all.*\nUnobtainable.", false);
+        }
+
+        if (!string.IsNullOrWhiteSpace(avatarUrl))
+            embed.WithThumbnailUrl(avatarUrl);
+
+        return embed.Build();
+    }
+
+    private Embed BuildServerStatsEmbed(SocketGuild guild)
+    {
+        _guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? stats);
+        _guildActivity.TryGetValue(guild.Id, out GuildActivityState? activityState);
+
+        long totalFixes = stats?.EmbedFixCount ?? 0;
+        List<string> achievements = GetServerAchievements(stats);
+        int unlocked = achievements.Count;
+        const int totalAchievements = 6;
+
+        string created = SnowflakeUtils.FromSnowflake(guild.Id).UtcDateTime.ToString("dd MMM yyyy");
+        string joined = activityState?.LastJoinedAtUtc != default
+            ? activityState!.LastJoinedAtUtc.ToString("dd MMM yyyy")
+            : stats?.FirstSeenAtUtc != default
+                ? stats!.FirstSeenAtUtc.ToString("dd MMM yyyy")
+                : "Unknown";
+
+        var embed = new EmbedBuilder()
+            .WithTitle($"🛰️ ApolloBot Server Profile — {guild.Name}")
+            .WithDescription($"**Server ID:** `{guild.Id}`")
+            .AddField("🏠 Server Information",
+                $"**Created:** {created}\n" +
+                $"**ApolloBot Joined:** {joined}\n" +
+                $"**Members:** {guild.MemberCount}", false)
+            .AddField("🔗 Embed Activity",
+                $"**Total Fixes:** {totalFixes}\n{FormatPlatformActivity(stats?.PlatformUsage)}", false)
+            .AddField("📊 Activity",
+                $"**Favourite Platform:** {GetFavouritePlatform(stats?.PlatformUsage)}\n" +
+                $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
+            .AddField("🏆 Achievements",
+                $"**{unlocked} / {totalAchievements}** unlocked\n" +
+                BuildAchievementPreview(achievements), false)
             .WithColor(Color.DarkTeal)
             .WithCurrentTimestamp();
 
-        string iconUrl = channel.Guild.IconUrl;
+        string iconUrl = guild.IconUrl;
         if (!string.IsNullOrWhiteSpace(iconUrl))
             embed.WithThumbnailUrl(iconUrl);
 
-        await channel.SendMessageAsync(embed: embed.Build());
+        return embed.Build();
+    }
+
+    private MessageComponent BuildStatsProfileComponents(string scope, ulong entityId)
+    {
+        return new ComponentBuilder()
+            .WithButton("View Achievements", $"stats_achievements:{scope}:{entityId}", ButtonStyle.Secondary, new Emoji("🏅"))
+            .Build();
+    }
+
+    private MessageComponent BuildAchievementComponents(string scope, ulong entityId)
+    {
+        return new ComponentBuilder()
+            .WithButton("Back to Profile", $"stats_profile:{scope}:{entityId}", ButtonStyle.Secondary, new Emoji("◀️"))
+            .Build();
     }
 
     private string FormatPlatformActivity(Dictionary<string, long>? platformUsage)
     {
         if (platformUsage == null || platformUsage.Count == 0 || platformUsage.Values.Sum() <= 0)
-            return "No embed activity recorded yet.";
+            return "**Platforms:** No embed activity recorded yet.";
 
-        long total = platformUsage.Values.Sum();
         return string.Join("\n", platformUsage
             .Where(x => x.Value > 0)
             .OrderByDescending(x => x.Value)
-            .Select(x => $"**{FormatPlatformName(x.Key)}:** {x.Value} ({(x.Value / (double)total) * 100:F1}%)"));
+            .Select(x => $"**{FormatPlatformName(x.Key)}:** {x.Value}"));
+    }
+
+    private string GetFavouritePlatform(Dictionary<string, long>? platformUsage)
+    {
+        if (platformUsage == null || platformUsage.Count == 0)
+            return "—";
+
+        KeyValuePair<string, long> favourite = platformUsage
+            .Where(x => x.Value > 0)
+            .OrderByDescending(x => x.Value)
+            .FirstOrDefault();
+
+        return favourite.Value > 0 ? FormatPlatformName(favourite.Key) : "—";
+    }
+
+    private string FormatLastActivity(DateTime? value)
+    {
+        if (!value.HasValue || value.Value == default)
+            return "—";
+
+        return value.Value.ToString("dd MMM yyyy HH:mm 'UTC'");
+    }
+
+    private string BuildAchievementPreview(List<string> achievements)
+    {
+        if (achievements.Count == 0)
+            return "No regular achievements unlocked yet.";
+
+        return string.Join("\n", achievements
+            .Where(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal))
+            .Take(3));
+    }
+
+    private int GetUserRegularAchievementCount(ulong userId, UserUsageStats? stats)
+    {
+        return GetUserAchievements(userId, stats)
+            .Count(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal));
     }
 
     private List<string> GetUserAchievements(ulong userId, UserUsageStats? stats)
@@ -2045,7 +2156,7 @@ class Program
         var unlocked = new List<string>();
         long fixes = stats?.EmbedFixCount ?? 0;
 
-        if (userId == 127877921464385537)
+        if (userId == ApolloBotCreatorUserId)
             unlocked.Add("👑 **ApolloBot Creator** — `UNIQUE` — The one who started it all.");
 
         if (fixes >= 1) unlocked.Add("🔧 **First Fix!** — `COMMON`");
@@ -2083,6 +2194,79 @@ class Program
             unlocked.Add("📡 **Multimedia Empire** — `EPIC`");
 
         return unlocked;
+    }
+
+    private Embed BuildUserAchievementsEmbed(ulong userId, string displayName)
+    {
+        _userUsageStats.TryGetValue(userId, out UserUsageStats? stats);
+        List<string> unlocked = GetUserAchievements(userId, stats);
+        long fixes = stats?.EmbedFixCount ?? 0;
+        int servers = stats?.GuildIds?.Count ?? 0;
+
+        var lines = new List<string>();
+
+        if (userId == ApolloBotCreatorUserId)
+            lines.Add("👑 **ApolloBot Creator** `UNIQUE`\n*The one who started it all.*\n✓ Special • Unobtainable");
+
+        lines.Add(FormatAchievementEntry("🔧", "First Fix!", "COMMON", "Complete your first embed fix.", fixes, 1));
+        lines.Add(FormatAchievementEntry("🩺", "Link Doctor", "UNCOMMON", "Complete 100 embed fixes.", fixes, 100));
+        lines.Add(FormatAchievementEntry("🚀", "Apollo Addict", "RARE", "Complete 1,000 embed fixes.", fixes, 1_000));
+        lines.Add(FormatAchievementEntry("🌐", "Terminally Online", "LEGENDARY", "Complete 10,000 embed fixes.", fixes, 10_000));
+
+        bool hatTrick = new[] { "twitter", "tiktok", "instagram" }.All(p =>
+            stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count > 0);
+        lines.Add(hatTrick
+            ? "🎩 **Hat Trick** `RARE`\nFix at least one Twitter/X, TikTok and Instagram link.\n✓ Unlocked"
+            : "🔒 **Hat Trick** `RARE`\nFix at least one Twitter/X, TikTok and Instagram link.");
+
+        lines.Add(FormatAchievementEntry("🌍", "Around the World", "EPIC", "Use ApolloBot in 5 different servers.", servers, 5));
+
+        return new EmbedBuilder()
+            .WithTitle($"🏆 {displayName} — Achievements")
+            .WithDescription(string.Join("\n\n", lines))
+            .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
+            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 6 regular achievements unlocked")
+            .Build();
+    }
+
+    private Embed BuildServerAchievementsEmbed(SocketGuild guild)
+    {
+        _guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? stats);
+        long fixes = stats?.EmbedFixCount ?? 0;
+
+        var lines = new List<string>
+        {
+            "👋 **Welcome Apollo!** `COMMON`\nApolloBot joined the server.\n✓ Unlocked",
+            FormatAchievementEntry("🛠️", "Getting Started", "COMMON", "Complete 100 embed fixes.", fixes, 100),
+            FormatAchievementEntry("🏭", "The Big Leagues", "UNCOMMON", "Complete 1,000 embed fixes.", fixes, 1_000),
+            FormatAchievementEntry("⚙️", "Link Factory", "RARE", "Complete 10,000 embed fixes.", fixes, 10_000),
+            FormatAchievementEntry("🏗️", "Industrial Scale", "LEGENDARY", "Complete 100,000 embed fixes.", fixes, 100_000)
+        };
+
+        bool multimedia = new[] { "twitter", "tiktok", "instagram" }.All(p =>
+            stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count >= 100);
+        lines.Add(multimedia
+            ? "📡 **Multimedia Empire** `EPIC`\nComplete 100 fixes on Twitter/X, TikTok and Instagram.\n✓ Unlocked"
+            : "🔒 **Multimedia Empire** `EPIC`\nComplete 100 fixes on Twitter/X, TikTok and Instagram.");
+
+        return new EmbedBuilder()
+            .WithTitle($"🏆 {guild.Name} — Achievements")
+            .WithDescription(string.Join("\n\n", lines))
+            .WithColor(Color.DarkTeal)
+            .WithFooter($"{GetServerAchievements(stats).Count} / 6 achievements unlocked")
+            .Build();
+    }
+
+    private string FormatAchievementEntry(string emoji, string name, string rarity, string description, long current, long target)
+    {
+        if (current >= target)
+            return $"{emoji} **{name}** `{rarity}`\n{description}\n✓ Unlocked";
+
+        double percent = target <= 0 ? 0 : Math.Clamp(current / (double)target, 0, 1);
+        int filled = (int)Math.Floor(percent * 10);
+        string bar = new string('█', filled) + new string('░', 10 - filled);
+
+        return $"🔒 **{name}** `{rarity}`\n{description}\n{current:N0} / {target:N0}  `{bar}`";
     }
 
     private async Task SendGuildUsageBreakdownAsync(SocketTextChannel textChannel)
@@ -3129,6 +3313,68 @@ class Program
         await component.Message.DeleteAsync();
     }
 
+    private async Task HandleStatsProfileButtonAsync(SocketMessageComponent component)
+    {
+        string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 || !ulong.TryParse(parts[2], out ulong entityId))
+        {
+            await component.RespondAsync("That profile button is no longer valid.", ephemeral: true);
+            return;
+        }
+
+        string action = parts[0];
+        string scope = parts[1];
+
+        if (scope == "user")
+        {
+            IUser? user = _client?.GetUser(entityId);
+            string displayName = user?.GlobalName ?? user?.Username ?? $"User {entityId}";
+            string avatarUrl = user?.GetAvatarUrl(ImageFormat.Auto, 256) ?? user?.GetDefaultAvatarUrl() ?? "";
+
+            Embed embed = action == "stats_achievements"
+                ? BuildUserAchievementsEmbed(entityId, displayName)
+                : BuildUserStatsEmbed(entityId, displayName, avatarUrl);
+
+            MessageComponent components = action == "stats_achievements"
+                ? BuildAchievementComponents("user", entityId)
+                : BuildStatsProfileComponents("user", entityId);
+
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(embed);
+                msg.Components = Optional.Create(components);
+            });
+            return;
+        }
+
+        if (scope == "server")
+        {
+            SocketGuild? guild = _client?.GetGuild(entityId);
+            if (guild == null)
+            {
+                await component.RespondAsync("I can no longer find that server.", ephemeral: true);
+                return;
+            }
+
+            Embed embed = action == "stats_achievements"
+                ? BuildServerAchievementsEmbed(guild)
+                : BuildServerStatsEmbed(guild);
+
+            MessageComponent components = action == "stats_achievements"
+                ? BuildAchievementComponents("server", entityId)
+                : BuildStatsProfileComponents("server", entityId);
+
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(embed);
+                msg.Components = Optional.Create(components);
+            });
+            return;
+        }
+
+        await component.RespondAsync("That profile button is no longer valid.", ephemeral: true);
+    }
+
     private async Task ButtonExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
@@ -3142,6 +3388,13 @@ class Program
         if (customId.StartsWith("page:", StringComparison.Ordinal))
         {
             await HandlePaginatorButtonAsync(component);
+            return;
+        }
+
+        if (customId.StartsWith("stats_achievements:", StringComparison.Ordinal) ||
+            customId.StartsWith("stats_profile:", StringComparison.Ordinal))
+        {
+            await HandleStatsProfileButtonAsync(component);
             return;
         }
 
