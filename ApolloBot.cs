@@ -138,6 +138,9 @@ class Program
     private static readonly string GuildUsageStatsFilePath =
         Path.Combine(DataDirectory, "guild_usage_stats.json");
 
+    private static readonly string UserUsageStatsFilePath =
+        Path.Combine(DataDirectory, "user_usage_stats.json");
+
     private static readonly string StatsExcludedGuildsFilePath =
         Path.Combine(DataDirectory, "stats_excluded_guilds.json");
 
@@ -146,6 +149,7 @@ class Program
 
     private readonly ConcurrentDictionary<ulong, GuildActivityState> _guildActivity = new();
     private readonly ConcurrentDictionary<ulong, GuildUsageStats> _guildUsageStats = new();
+    private readonly ConcurrentDictionary<ulong, UserUsageStats> _userUsageStats = new();
 
     private readonly ulong _ownerLogChannelId =
         ulong.TryParse(Environment.GetEnvironmentVariable("OWNER_LOG_CHANNEL_ID"), out ulong parsedOwnerLogChannelId)
@@ -187,6 +191,7 @@ class Program
         LoadPlannedUpdates();
         LoadGuildActivityState();
         LoadGuildUsageStats();
+        LoadUserUsageStats();
         LoadStatsExcludedGuilds();
         LoadBlockedGuilds();
         RegisterShutdownHandlers();
@@ -629,6 +634,7 @@ class Program
             SaveRelayStates();
             IncrementEmbedsFixedCount();
             RecordGuildEmbedFix(textChannel.Guild, detectedPlatforms);
+            RecordUserEmbedFix(message.Author, textChannel.Guild.Id, detectedPlatforms);
 
             await message.DeleteAsync();
         }
@@ -1653,9 +1659,15 @@ class Program
             return;
         }
 
-        if (sub == "usage")
+        if (sub == "userstats")
         {
-            await SendGuildUsageBreakdownAsync(textChannel);
+            await SendUserStatsAsync(message, textChannel, parts);
+            return;
+        }
+
+        if (sub == "serverstats")
+        {
+            await SendPublicServerStatsAsync(textChannel);
             return;
         }
 
@@ -1947,6 +1959,130 @@ class Program
             .Build();
 
         await textChannel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SendUserStatsAsync(SocketUserMessage message, SocketTextChannel channel, string[] parts)
+    {
+        ulong targetUserId = message.Author.Id;
+
+        if (parts.Length >= 2)
+        {
+            string rawTarget = parts[1].Trim();
+            Match mentionMatch = Regex.Match(rawTarget, @"^<@!?(\d+)>$");
+
+            if (mentionMatch.Success)
+                ulong.TryParse(mentionMatch.Groups[1].Value, out targetUserId);
+            else if (!ulong.TryParse(rawTarget, out targetUserId))
+            {
+                await channel.SendMessageAsync("Usage: `!ab userstats [@user|userID]`");
+                return;
+            }
+        }
+
+        IUser? targetUser = _client?.GetUser(targetUserId);
+        string displayName = targetUser?.GlobalName ?? targetUser?.Username ?? $"User {targetUserId}";
+        string avatarUrl = targetUser?.GetAvatarUrl(ImageFormat.Auto, 256) ?? targetUser?.GetDefaultAvatarUrl() ?? "";
+
+        _userUsageStats.TryGetValue(targetUserId, out UserUsageStats? stats);
+        long totalFixes = stats?.EmbedFixCount ?? 0;
+        int serverCount = stats?.GuildIds?.Count ?? 0;
+        string activity = FormatPlatformActivity(stats?.PlatformUsage);
+        List<string> achievements = GetUserAchievements(targetUserId, stats);
+
+        var embed = new EmbedBuilder()
+            .WithTitle($"ApolloBot User Stats — {displayName}")
+            .AddField("Embed Fixes", totalFixes, true)
+            .AddField("Servers Used", serverCount, true)
+            .AddField("Embed Activity", activity, false)
+            .AddField("Achievements", achievements.Count == 0 ? "None unlocked yet." : string.Join("\n", achievements), false)
+            .WithColor(targetUserId == 127877921464385537 ? Color.Gold : Color.Teal)
+            .WithCurrentTimestamp();
+
+        if (!string.IsNullOrWhiteSpace(avatarUrl))
+            embed.WithThumbnailUrl(avatarUrl);
+
+        await channel.SendMessageAsync(embed: embed.Build());
+    }
+
+    private async Task SendPublicServerStatsAsync(SocketTextChannel channel)
+    {
+        _guildUsageStats.TryGetValue(channel.Guild.Id, out GuildUsageStats? stats);
+
+        long totalFixes = stats?.EmbedFixCount ?? 0;
+        string activity = FormatPlatformActivity(stats?.PlatformUsage);
+        List<string> achievements = GetServerAchievements(stats);
+
+        var embed = new EmbedBuilder()
+            .WithTitle($"ApolloBot Server Stats — {channel.Guild.Name}")
+            .AddField("Members", channel.Guild.MemberCount, true)
+            .AddField("Embed Fixes", totalFixes, true)
+            .AddField("Embed Activity", activity, false)
+            .AddField("Achievements", achievements.Count == 0 ? "None unlocked yet." : string.Join("\n", achievements), false)
+            .WithColor(Color.DarkTeal)
+            .WithCurrentTimestamp();
+
+        string iconUrl = channel.Guild.IconUrl;
+        if (!string.IsNullOrWhiteSpace(iconUrl))
+            embed.WithThumbnailUrl(iconUrl);
+
+        await channel.SendMessageAsync(embed: embed.Build());
+    }
+
+    private string FormatPlatformActivity(Dictionary<string, long>? platformUsage)
+    {
+        if (platformUsage == null || platformUsage.Count == 0 || platformUsage.Values.Sum() <= 0)
+            return "No embed activity recorded yet.";
+
+        long total = platformUsage.Values.Sum();
+        return string.Join("\n", platformUsage
+            .Where(x => x.Value > 0)
+            .OrderByDescending(x => x.Value)
+            .Select(x => $"**{FormatPlatformName(x.Key)}:** {x.Value} ({(x.Value / (double)total) * 100:F1}%)"));
+    }
+
+    private List<string> GetUserAchievements(ulong userId, UserUsageStats? stats)
+    {
+        var unlocked = new List<string>();
+        long fixes = stats?.EmbedFixCount ?? 0;
+
+        if (userId == 127877921464385537)
+            unlocked.Add("👑 **ApolloBot Creator** — `UNIQUE` — The one who started it all.");
+
+        if (fixes >= 1) unlocked.Add("🔧 **First Fix!** — `COMMON`");
+        if (fixes >= 100) unlocked.Add("🩺 **Link Doctor** — `UNCOMMON`");
+        if (fixes >= 1_000) unlocked.Add("🚀 **Apollo Addict** — `RARE`");
+        if (fixes >= 10_000) unlocked.Add("🌐 **Terminally Online** — `LEGENDARY`");
+
+        HashSet<string> platforms = stats?.PlatformUsage?
+            .Where(x => x.Value > 0)
+            .Select(x => x.Key.ToLowerInvariant())
+            .ToHashSet() ?? new HashSet<string>();
+
+        if (platforms.Contains("twitter") && platforms.Contains("tiktok") && platforms.Contains("instagram"))
+            unlocked.Add("🎩 **Hat Trick** — `RARE`");
+
+        if ((stats?.GuildIds?.Count ?? 0) >= 5)
+            unlocked.Add("🌍 **Around the World** — `EPIC`");
+
+        return unlocked;
+    }
+
+    private List<string> GetServerAchievements(GuildUsageStats? stats)
+    {
+        var unlocked = new List<string>();
+        long fixes = stats?.EmbedFixCount ?? 0;
+
+        unlocked.Add("👋 **Welcome Apollo!** — `COMMON`");
+        if (fixes >= 100) unlocked.Add("🛠️ **Getting Started** — `COMMON`");
+        if (fixes >= 1_000) unlocked.Add("🏭 **The Big Leagues** — `UNCOMMON`");
+        if (fixes >= 10_000) unlocked.Add("⚙️ **Link Factory** — `RARE`");
+        if (fixes >= 100_000) unlocked.Add("🏗️ **Industrial Scale** — `LEGENDARY`");
+
+        Dictionary<string, long>? platforms = stats?.PlatformUsage;
+        if (platforms != null && new[] { "twitter", "tiktok", "instagram" }.All(p => platforms.TryGetValue(p, out long count) && count >= 100))
+            unlocked.Add("📡 **Multimedia Empire** — `EPIC`");
+
+        return unlocked;
     }
 
     private async Task SendGuildUsageBreakdownAsync(SocketTextChannel textChannel)
@@ -2685,6 +2821,7 @@ class Program
         SaveRelayStates();
         IncrementEmbedsFixedCount();
         RecordGuildEmbedFix(textChannel.Guild, detectedPlatforms);
+        RecordUserEmbedFix(command.User, textChannel.Guild.Id, detectedPlatforms);
 
         await command.FollowupAsync("Done! I posted the fixed embed version in this channel.", ephemeral: true);
     }
@@ -3391,7 +3528,8 @@ class Program
             "`!ab perms` – Check channel permissions",
             "`!ab status` – Show server settings",
             "`!ab info <message link>` – Show relay info for an ApolloBot message",
-            "`!ab usage` – Show this server's platform usage breakdown",
+            "`!ab userstats [@user|userID]` – Show global ApolloBot stats and achievements for a user",
+            "`!ab serverstats` – Show this server's ApolloBot activity and achievements",
             "`!support` – Open support / bug report page",
             "`!ab ignore on` – Ignore your embeds in this server",
             "`!ab ignore off` – Stop ignoring your embeds in this server",
@@ -3473,6 +3611,35 @@ class Program
             LastUpdatedAtUtc = DateTime.UtcNow,
             PlatformUsage = new Dictionary<string, long>()
         };
+    }
+
+    private void RecordUserEmbedFix(IUser user, ulong guildId, IEnumerable<string>? platforms = null)
+    {
+        UserUsageStats stats = _userUsageStats.GetOrAdd(user.Id, _ => new UserUsageStats
+        {
+            UserId = user.Id,
+            Username = user.Username,
+            FirstUsedAtUtc = DateTime.UtcNow
+        });
+
+        stats.Username = user.Username;
+        stats.EmbedFixCount++;
+        stats.LastUsedAtUtc = DateTime.UtcNow;
+        stats.GuildIds ??= new HashSet<ulong>();
+        stats.GuildIds.Add(guildId);
+        stats.PlatformUsage ??= new Dictionary<string, long>();
+
+        if (platforms != null)
+        {
+            foreach (string platform in platforms.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                string key = platform.ToLowerInvariant();
+                stats.PlatformUsage.TryGetValue(key, out long current);
+                stats.PlatformUsage[key] = current + 1;
+            }
+        }
+
+        SaveUserUsageStats();
     }
 
     private void RecordGuildEmbedFix(SocketGuild guild, IEnumerable<string>? platforms = null)
@@ -3780,6 +3947,49 @@ class Program
             return true;
 
         return settings.WhitelistedChannelIds.Contains(channel.Id);
+    }
+
+    private void SaveUserUsageStats()
+    {
+        try
+        {
+            string json = JsonSerializer.Serialize(_userUsageStats, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            File.WriteAllText(UserUsageStatsFilePath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to save user usage stats: {ex}");
+        }
+    }
+
+    private void LoadUserUsageStats()
+    {
+        try
+        {
+            if (!File.Exists(UserUsageStatsFilePath))
+                return;
+
+            string json = File.ReadAllText(UserUsageStatsFilePath);
+            Dictionary<ulong, UserUsageStats>? loaded = JsonSerializer.Deserialize<Dictionary<ulong, UserUsageStats>>(json);
+
+            _userUsageStats.Clear();
+            if (loaded == null)
+                return;
+
+            foreach ((ulong userId, UserUsageStats stats) in loaded)
+            {
+                stats.PlatformUsage ??= new Dictionary<string, long>();
+                stats.GuildIds ??= new HashSet<ulong>();
+                _userUsageStats[userId] = stats;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load user usage stats: {ex}");
+        }
     }
 
     private bool IsBotOwner(SocketUser user)
@@ -5419,6 +5629,17 @@ class GuildActivityState
     public DateTime LastJoinedAtUtc { get; set; }
     public DateTime LastRemovedAtUtc { get; set; }
     public DateTime LastUpdatedAtUtc { get; set; }
+}
+
+class UserUsageStats
+{
+    public ulong UserId { get; set; }
+    public string Username { get; set; } = "";
+    public long EmbedFixCount { get; set; }
+    public DateTime FirstUsedAtUtc { get; set; }
+    public DateTime LastUsedAtUtc { get; set; }
+    public HashSet<ulong> GuildIds { get; set; } = new();
+    public Dictionary<string, long> PlatformUsage { get; set; } = new();
 }
 
 class GuildUsageStats
