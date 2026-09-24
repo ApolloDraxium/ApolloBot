@@ -2055,7 +2055,7 @@ class Program
         long totalFixes = stats?.EmbedFixCount ?? 0;
         List<string> achievements = GetServerAchievements(stats);
         int unlocked = achievements.Count;
-        const int totalAchievements = 6;
+        const int totalAchievements = 11;
 
         string created = SnowflakeUtils.FromSnowflake(guild.Id).UtcDateTime.ToString("dd MMM yyyy");
         string joined = activityState?.LastJoinedAtUtc != default
@@ -2188,10 +2188,15 @@ class Program
         long fixes = stats?.EmbedFixCount ?? 0;
 
         unlocked.Add("👋 **Welcome Apollo!** — `COMMON`");
-        if (fixes >= 100) unlocked.Add("🛠️ **Getting Started** — `COMMON`");
-        if (fixes >= 1_000) unlocked.Add("🏭 **The Big Leagues** — `UNCOMMON`");
-        if (fixes >= 10_000) unlocked.Add("⚙️ **Link Factory** — `RARE`");
-        if (fixes >= 100_000) unlocked.Add("🏗️ **Industrial Scale** — `LEGENDARY`");
+        if (fixes >= 25) unlocked.Add("🔧 **Getting Started** — `COMMON`");
+        if (fixes >= 100) unlocked.Add("🔗 **Link Fixers** — `COMMON`");
+        if (fixes >= 250) unlocked.Add("🛠️ **Regular Customers** — `UNCOMMON`");
+        if (fixes >= 500) unlocked.Add("⭐ **Apollo Approved** — `UNCOMMON`");
+        if (fixes >= 1_000) unlocked.Add("🏭 **Link Factory** — `RARE`");
+        if (fixes >= 2_000) unlocked.Add("⚙️ **Industrial Scale** — `EPIC`");
+        if (fixes >= 2_500) unlocked.Add("🤨 **Seriously?** — `EPIC`");
+        if (fixes >= 5_000) unlocked.Add("🌱 **Touch Grass, Collectively** — `LEGENDARY`");
+        if (fixes >= 10_000) unlocked.Add("💀 **What Have You Done?** — `LEGENDARY`");
 
         Dictionary<string, long>? platforms = stats?.PlatformUsage;
         if (platforms != null && new[] { "twitter", "tiktok", "instagram" }.All(p => platforms.TryGetValue(p, out long count) && count >= 100))
@@ -2245,23 +2250,29 @@ class Program
         var lines = new List<string>
         {
             "👋 **Welcome Apollo!** `COMMON`\nApolloBot joined the server.\n✓ Unlocked",
-            FormatAchievementEntry("🛠️", "Getting Started", "COMMON", "Complete 100 embed fixes.", fixes, 100),
-            FormatAchievementEntry("🏭", "The Big Leagues", "UNCOMMON", "Complete 1,000 embed fixes.", fixes, 1_000),
-            FormatAchievementEntry("⚙️", "Link Factory", "RARE", "Complete 10,000 embed fixes.", fixes, 10_000),
-            FormatAchievementEntry("🏗️", "Industrial Scale", "LEGENDARY", "Complete 100,000 embed fixes.", fixes, 100_000)
+            FormatAchievementEntry("🔧", "Getting Started", "COMMON", "Complete 25 embed fixes.", fixes, 25),
+            FormatAchievementEntry("🔗", "Link Fixers", "COMMON", "Complete 100 embed fixes.", fixes, 100),
+            FormatAchievementEntry("🛠️", "Regular Customers", "UNCOMMON", "Complete 250 embed fixes.", fixes, 250),
+            FormatAchievementEntry("⭐", "Apollo Approved", "UNCOMMON", "Complete 500 embed fixes.", fixes, 500),
+            FormatAchievementEntry("🏭", "Link Factory", "RARE", "Complete 1,000 embed fixes.", fixes, 1_000),
+            FormatAchievementEntry("⚙️", "Industrial Scale", "EPIC", "Complete 2,000 embed fixes.", fixes, 2_000),
+            FormatAchievementEntry("🤨", "Seriously?", "EPIC", "Complete 2,500 embed fixes.", fixes, 2_500),
+            FormatAchievementEntry("🌱", "Touch Grass, Collectively", "LEGENDARY", "Complete 5,000 embed fixes.", fixes, 5_000),
+            FormatAchievementEntry("💀", "What Have You Done?", "LEGENDARY", "Complete 10,000 embed fixes.", fixes, 10_000)
         };
 
         bool multimedia = new[] { "twitter", "tiktok", "instagram" }.All(p =>
             stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count >= 100);
+
         lines.Add(multimedia
-            ? "📡 **Multimedia Empire** `EPIC`\nComplete 100 fixes on Twitter/X, TikTok and Instagram.\n✓ Unlocked"
-            : "🔒 **Multimedia Empire** `EPIC`\nComplete 100 fixes on Twitter/X, TikTok and Instagram.");
+            ? "📡 **Multimedia Empire** `EPIC`\nComplete 100 fixes each on Twitter/X, TikTok and Instagram.\n✓ Unlocked"
+            : "🔒 **Multimedia Empire** `EPIC`\nComplete 100 fixes each on Twitter/X, TikTok and Instagram.");
 
         return new EmbedBuilder()
             .WithTitle($"🏆 {guild.Name} — Achievements")
             .WithDescription(string.Join("\n\n", lines))
             .WithColor(Color.DarkTeal)
-            .WithFooter($"{GetServerAchievements(stats).Count} / 6 achievements unlocked")
+            .WithFooter($"{GetServerAchievements(stats).Count} / 11 achievements unlocked")
             .Build();
     }
 
@@ -2271,10 +2282,11 @@ class Program
             return $"{emoji} **{name}** `{rarity}`\n{description}\n✓ Unlocked";
 
         double percent = target <= 0 ? 0 : Math.Clamp(current / (double)target, 0, 1);
-        int filled = (int)Math.Floor(percent * 10);
+        int filled = percent > 0 ? Math.Max(1, (int)Math.Floor(percent * 10)) : 0;
         string bar = new string('█', filled) + new string('░', 10 - filled);
+        int percentDisplay = (int)Math.Floor(percent * 100);
 
-        return $"🔒 **{name}** `{rarity}`\n{description}\n{current:N0} / {target:N0}  `{bar}`";
+        return $"🔒 **{name}** `{rarity}`\n{description}\n`{bar}` **{percentDisplay}%**  ({current:N0} / {target:N0})";
     }
 
     private async Task SendGuildUsageBreakdownAsync(SocketTextChannel textChannel)
