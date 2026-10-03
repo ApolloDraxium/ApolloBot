@@ -562,6 +562,7 @@ class Program
 
         if (content.Equals("!vote", StringComparison.OrdinalIgnoreCase))
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, "vote")) return;
             await SendVoteMessage(textChannel, userMessage.Author);
             return;
         }
@@ -569,6 +570,7 @@ class Program
         if (content.Equals("!updates", StringComparison.OrdinalIgnoreCase) ||
             content.Equals("!ab updates", StringComparison.OrdinalIgnoreCase))
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, "updates")) return;
             await SendPlannedUpdates(textChannel);
             return;
         }
@@ -1707,6 +1709,49 @@ class Program
         return (displayName, avatarUrl);
     }
 
+    private static readonly string[] OptionalUserCommands =
+    {
+        "fox", "cat", "dog", "roll", "userstats", "serverstats", "vote", "updates"
+    };
+
+    private static string FormatOptionalCommandName(string command) => command switch
+    {
+        "fox" => "🦊 Fox",
+        "cat" => "🐱 Cat",
+        "dog" => "🐶 Dog",
+        "roll" => "🎲 Roll",
+        "userstats" => "📊 User Stats",
+        "serverstats" => "🏆 Server Stats",
+        "vote" => "⭐ Vote",
+        "updates" => "📋 Updates",
+        _ => command
+    };
+
+    private bool IsOptionalCommandDisabled(ulong guildId, string command)
+    {
+        GuildSettings settings = GetOrCreateGuildSettings(guildId);
+        settings.DisabledUserCommands ??= new List<string>();
+        return settings.DisabledUserCommands.Contains(command, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> StopIfOptionalCommandDisabledAsync(SocketTextChannel channel, string command)
+    {
+        if (!IsOptionalCommandDisabled(channel.Guild.Id, command))
+            return false;
+
+        await channel.SendMessageAsync("🚫 **That command is disabled in this server.**");
+        return true;
+    }
+
+    private async Task<bool> StopIfOptionalSlashCommandDisabledAsync(SocketSlashCommand command, string commandName)
+    {
+        if (command.Channel is not SocketTextChannel channel || !IsOptionalCommandDisabled(channel.Guild.Id, commandName))
+            return false;
+
+        await command.RespondAsync("🚫 **That command is disabled in this server.**", ephemeral: true);
+        return true;
+    }
+
     private async Task HandleApolloBotCommand(SocketUserMessage message, SocketTextChannel textChannel)
     {
         string raw = message.Content.Trim();
@@ -1750,6 +1795,7 @@ class Program
 
         if (sub == "updates")
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, "updates")) return;
             await SendPlannedUpdates(textChannel);
             return;
         }
@@ -1781,6 +1827,7 @@ class Program
 
         if (sub is "fox" or "cat" or "dog")
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, sub)) return;
             await SendRandomAnimalAsync(message.Author.Id, textChannel, sub);
             return;
         }
@@ -1817,12 +1864,14 @@ class Program
 
         if (sub == "userstats")
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, "userstats")) return;
             await SendUserStatsAsync(message, textChannel, parts);
             return;
         }
 
         if (sub == "serverstats")
         {
+            if (await StopIfOptionalCommandDisabledAsync(textChannel, "serverstats")) return;
             await SendPublicServerStatsAsync(message, textChannel);
             return;
         }
@@ -2002,6 +2051,33 @@ class Program
     private async Task SelectMenuExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
+        if (customId.StartsWith("serversetup_disabledcommands:", StringComparison.Ordinal))
+        {
+            if (component.Channel is not SocketTextChannel setupChannel || component.User is not SocketGuildUser setupUser || !setupUser.GuildPermissions.ManageGuild)
+            {
+                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                return;
+            }
+            string[] setupParts = customId.Split(':');
+            if (setupParts.Length != 2 || !ulong.TryParse(setupParts[1], out ulong setupGuildId) || setupGuildId != setupChannel.Guild.Id)
+            {
+                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                return;
+            }
+            GuildSettings guildSettings = GetOrCreateGuildSettings(setupGuildId);
+            guildSettings.DisabledUserCommands = component.Data.Values
+                .Where(v => OptionalUserCommands.Contains(v, StringComparer.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            SaveGuildSettings();
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(BuildCommandSettingsEmbed(guildSettings));
+                msg.Components = Optional.Create(BuildCommandSettingsComponents(guildSettings, setupGuildId));
+            });
+            return;
+        }
+
         if (!customId.StartsWith("usersettings_", StringComparison.Ordinal))
             return;
 
@@ -2234,6 +2310,8 @@ class Program
         settings.ButtonsEnabled = true;
         settings.ButtonCooldownSeconds = 3;
         settings.WhitelistedChannelIds.Clear();
+        settings.DisabledUserCommands ??= new List<string>();
+        settings.DisabledUserCommands.Clear();
 
         SaveGuildSettings();
 
@@ -2681,7 +2759,7 @@ class Program
     private async Task SendApolloBotHelp(SocketTextChannel channel, SocketUser user)
     {
         bool isAdmin = user is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
-        List<string> lines = BuildApolloBotHelpLines(isAdmin);
+        List<string> lines = BuildApolloBotHelpLines(isAdmin, GetOrCreateGuildSettings(channel.Guild.Id));
 
         await SendPaginatedEmbedAsync(
             channel,
@@ -3310,12 +3388,12 @@ class Program
         {
             switch (command.Data.Name)
             {
-                case "roll": await HandleRollSlashCommand(command); return;
+                case "roll": if (await StopIfOptionalSlashCommandDisabledAsync(command, "roll")) return; await HandleRollSlashCommand(command); return;
                 case "fix": await HandleFixSlashCommand(command); return;
                 case "usersettings": await HandleUserSettingsSlashCommand(command); return;
-                case "userstats": await HandleUserStatsSlashCommand(command); return;
-                case "serverstats": await HandleServerStatsSlashCommand(command); return;
-                case "fox": case "cat": case "dog": await HandleAnimalSlashCommand(command); return;
+                case "userstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "userstats")) return; await HandleUserStatsSlashCommand(command); return;
+                case "serverstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "serverstats")) return; await HandleServerStatsSlashCommand(command); return;
+                case "fox": case "cat": case "dog": if (await StopIfOptionalSlashCommandDisabledAsync(command, command.Data.Name)) return; await HandleAnimalSlashCommand(command); return;
                 case "ping": await command.RespondAsync($"🏓 Pong! Gateway latency: **{_client?.Latency ?? 0}ms**"); return;
                 case "embedfix": case "silent": case "togglebuttons": case "cooldown": case "whitelist": case "reset":
                     await HandleAdminSlashCommand(command); return;
@@ -3379,22 +3457,78 @@ class Program
     private bool SlashUserCanManageGuild(SocketSlashCommand command) =>
         command.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
 
-    private async Task HandleSetupSlashCommand(SocketSlashCommand command)
+    private Embed BuildServerSetupEmbed(SocketGuild guild, GuildSettings settings)
     {
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Setup is only available inside servers.", ephemeral: true); return; }
-        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to open server setup.", ephemeral: true); return; }
-        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        settings.DisabledUserCommands ??= new List<string>();
         string channels = settings.WhitelistedChannelIds.Count == 0 ? "All channels" : $"{settings.WhitelistedChannelIds.Count} whitelisted channel(s)";
-        var embed = new EmbedBuilder().WithTitle("🛠️ ApolloBot Server Setup")
-            .WithDescription("Current settings for this server. Use the slash commands below to change them.")
+        string optional = settings.DisabledUserCommands.Count == 0
+            ? "All enabled"
+            : $"{settings.DisabledUserCommands.Count} disabled";
+
+        return new EmbedBuilder()
+            .WithTitle("🛠️ ApolloBot Server Setup")
+            .WithDescription("Manage ApolloBot for this server. Only members with **Manage Server** can use these controls.")
             .AddField("Embed Fixing", settings.Enabled ? "Enabled" : "Disabled", true)
             .AddField("Channels", channels, true)
             .AddField("Relay Buttons", settings.ButtonsEnabled ? "Enabled" : "Disabled", true)
             .AddField("Silent Mode", settings.SilentMode ? "Enabled" : "Disabled", true)
             .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} seconds", true)
-            .AddField("Commands", "`/embedfix` `/whitelist` `/silent` `/togglebuttons` `/cooldown` `/reset`", false)
-            .WithColor(Color.Teal).Build();
-        await command.RespondAsync(embed: embed, ephemeral: true);
+            .AddField("Optional Commands", optional, true)
+            .WithColor(Color.Teal)
+            .Build();
+    }
+
+    private MessageComponent BuildServerSetupComponents(ulong guildId)
+    {
+        return new ComponentBuilder()
+            .WithButton("Command Settings", $"serversetup_commands:{guildId}", ButtonStyle.Primary)
+            .WithButton("Refresh", $"serversetup_refresh:{guildId}", ButtonStyle.Secondary)
+            .Build();
+    }
+
+    private Embed BuildCommandSettingsEmbed(GuildSettings settings)
+    {
+        settings.DisabledUserCommands ??= new List<string>();
+        string disabled = settings.DisabledUserCommands.Count == 0
+            ? "None"
+            : string.Join("\n", settings.DisabledUserCommands.Where(OptionalUserCommands.Contains).Select(x => $"• {FormatOptionalCommandName(x)}"));
+
+        return new EmbedBuilder()
+            .WithTitle("⚙️ Optional Command Settings")
+            .WithDescription("Choose which optional commands members can use in this server. Core ApolloBot commands always stay available.")
+            .AddField("Currently disabled", disabled, false)
+            .WithColor(Color.Teal)
+            .Build();
+    }
+
+    private MessageComponent BuildCommandSettingsComponents(GuildSettings settings, ulong guildId)
+    {
+        settings.DisabledUserCommands ??= new List<string>();
+        var menu = new SelectMenuBuilder()
+            .WithCustomId($"serversetup_disabledcommands:{guildId}")
+            .WithPlaceholder("Select commands to disable")
+            .WithMinValues(0)
+            .WithMaxValues(OptionalUserCommands.Length);
+
+        foreach (string command in OptionalUserCommands)
+        {
+            menu.AddOption(FormatOptionalCommandName(command), command, $"Disable /{command} and its prefix version where available",
+                isDefault: settings.DisabledUserCommands.Contains(command, StringComparer.OrdinalIgnoreCase));
+        }
+
+        return new ComponentBuilder()
+            .WithSelectMenu(menu)
+            .WithButton("Enable all", $"serversetup_enableall:{guildId}", ButtonStyle.Secondary)
+            .WithButton("Back", $"serversetup_back:{guildId}", ButtonStyle.Secondary)
+            .Build();
+    }
+
+    private async Task HandleSetupSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Setup is only available inside servers.", ephemeral: true); return; }
+        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to open server setup.", ephemeral: true); return; }
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        await command.RespondAsync(embed: BuildServerSetupEmbed(channel.Guild, settings), components: BuildServerSetupComponents(channel.Guild.Id), ephemeral: true);
     }
 
     private async Task HandleAdminSlashCommand(SocketSlashCommand command)
@@ -3407,7 +3541,7 @@ class Program
         if (name == "silent") { settings.SilentMode = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Silent mode is now **{(settings.SilentMode ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
         if (name == "togglebuttons") { settings.ButtonsEnabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay buttons are now **{(settings.ButtonsEnabled ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
         if (name == "cooldown") { settings.ButtonCooldownSeconds = Convert.ToInt32(command.Data.Options.First(x => x.Name == "seconds").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay button cooldown set to **{settings.ButtonCooldownSeconds} seconds**.", ephemeral: true); return; }
-        if (name == "reset") { settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3; settings.WhitelistedChannelIds.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ ApolloBot's server settings have been reset to defaults.", ephemeral: true); return; }
+        if (name == "reset") { settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3; settings.WhitelistedChannelIds.Clear(); settings.DisabledUserCommands.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ ApolloBot's server settings have been reset to defaults.", ephemeral: true); return; }
         if (name == "whitelist")
         {
             string action = command.Data.Options.First(x => x.Name == "action").Value?.ToString() ?? "list";
@@ -3422,6 +3556,10 @@ class Program
 
     private async Task HandleLegacyPublicSlashCommand(SocketSlashCommand command)
     {
+        if (command.Data.Name is "updates" or "vote")
+        {
+            if (await StopIfOptionalSlashCommandDisabledAsync(command, command.Data.Name)) return;
+        }
         if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command is available inside servers. `/fix` and `/roll` are available in DMs.", ephemeral: true); return; }
         await command.DeferAsync(ephemeral: true);
         switch (command.Data.Name)
@@ -3931,6 +4069,39 @@ class Program
     {
         string customId = component.Data.CustomId;
 
+        if (customId.StartsWith("serversetup_", StringComparison.Ordinal))
+        {
+            if (component.Channel is not SocketTextChannel setupChannel || component.User is not SocketGuildUser setupUser || !setupUser.GuildPermissions.ManageGuild)
+            {
+                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                return;
+            }
+            string[] setupParts = customId.Split(':');
+            if (setupParts.Length != 2 || !ulong.TryParse(setupParts[1], out ulong setupGuildId) || setupGuildId != setupChannel.Guild.Id)
+            {
+                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                return;
+            }
+            GuildSettings guildSettings = GetOrCreateGuildSettings(setupGuildId);
+            if (customId.StartsWith("serversetup_commands:", StringComparison.Ordinal))
+            {
+                await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildCommandSettingsEmbed(guildSettings)); msg.Components = Optional.Create(BuildCommandSettingsComponents(guildSettings, setupGuildId)); });
+                return;
+            }
+            if (customId.StartsWith("serversetup_enableall:", StringComparison.Ordinal))
+            {
+                guildSettings.DisabledUserCommands.Clear();
+                SaveGuildSettings();
+                await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildCommandSettingsEmbed(guildSettings)); msg.Components = Optional.Create(BuildCommandSettingsComponents(guildSettings, setupGuildId)); });
+                return;
+            }
+            if (customId.StartsWith("serversetup_back:", StringComparison.Ordinal) || customId.StartsWith("serversetup_refresh:", StringComparison.Ordinal))
+            {
+                await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildServerSetupEmbed(setupChannel.Guild, guildSettings)); msg.Components = Optional.Create(BuildServerSetupComponents(setupGuildId)); });
+                return;
+            }
+        }
+
         if (customId.StartsWith("usersettings_reset:", StringComparison.Ordinal))
         {
             string[] parts = customId.Split(':');
@@ -4252,7 +4423,7 @@ class Program
 
                 case "abhelp":
                     bool isAdmin = component.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
-                    lines = BuildApolloBotHelpLines(isAdmin);
+                    lines = BuildApolloBotHelpLines(isAdmin, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id));
                     title = "📦 ApolloBot Commands";
                     headerText = "Embed fixing, support, and utility commands.";
                     color = Color.Teal;
@@ -4351,8 +4522,9 @@ class Program
         };
     }
 
-    private List<string> BuildApolloBotHelpLines(bool isAdmin)
+    private List<string> BuildApolloBotHelpLines(bool isAdmin, GuildSettings? settings = null)
     {
+        bool Enabled(string command) => settings == null || !IsOptionalCommandDisabled(settings.GuildId, command);
         var lines = new List<string>
         {
             "**Getting Started**",
@@ -4366,21 +4538,26 @@ class Program
             "`/info` or `!ab info <message link>` – View relay information",
             "`/perms` or `!ab perms` – Check ApolloBot's channel permissions",
             "",
-            "**Stats & Extras**",
-            "`/userstats` or `!ab userstats [@user|userID]` – User stats and achievements",
-            "`/serverstats` or `!ab serverstats` – Server stats and achievements",
-            "`/fox` `/cat` `/dog` – Random animal pictures",
-            "`/roll` – Roll dice",
-            "`/updates` – Planned updates",
-            "`/vote` – Vote for ApolloBot",
-            "`/ping` – Check gateway latency"
+            "**Stats & Extras**"
         };
+
+        if (Enabled("userstats")) lines.Add("`/userstats` or `!ab userstats [@user|userID]` – User stats and achievements");
+        if (Enabled("serverstats")) lines.Add("`/serverstats` or `!ab serverstats` – Server stats and achievements");
+        var animals = new List<string>();
+        if (Enabled("fox")) animals.Add("`/fox`");
+        if (Enabled("cat")) animals.Add("`/cat`");
+        if (Enabled("dog")) animals.Add("`/dog`");
+        if (animals.Count > 0) lines.Add($"{string.Join(" ", animals)} – Random animal pictures");
+        if (Enabled("roll")) lines.Add("`/roll` – Roll dice");
+        if (Enabled("updates")) lines.Add("`/updates` – Planned updates");
+        if (Enabled("vote")) lines.Add("`/vote` – Vote for ApolloBot");
+        lines.Add("`/ping` – Check gateway latency");
 
         if (isAdmin)
         {
             lines.Add("");
             lines.Add("**Server Settings**");
-            lines.Add("`/setup` – View the server's ApolloBot setup");
+            lines.Add("`/setup` – Open the server setup panel and optional command settings");
             lines.Add("`/embedfix` – Enable or disable embed fixing");
             lines.Add("`/whitelist` – Manage allowed channels");
             lines.Add("`/silent` – Change silent mode");
@@ -4834,7 +5011,8 @@ class Program
             SilentMode = false,
             ButtonsEnabled = true,
             ButtonCooldownSeconds = 3,
-            WhitelistedChannelIds = new List<ulong>()
+            WhitelistedChannelIds = new List<ulong>(),
+            DisabledUserCommands = new List<string>()
         };
 
         _guildSettings[guildId] = created;
@@ -6378,6 +6556,13 @@ class Program
 
             foreach ((ulong guildId, GuildSettings settings) in loaded)
             {
+                settings.WhitelistedChannelIds ??= new List<ulong>();
+                settings.DisabledUserCommands ??= new List<string>();
+                settings.DisabledUserCommands = settings.DisabledUserCommands
+                    .Where(x => OptionalUserCommands.Contains(x, StringComparer.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
                 if (settings.ButtonCooldownSeconds <= 0)
                 {
                     settings.ButtonCooldownSeconds = 3;
@@ -6592,6 +6777,7 @@ class GuildSettings
     public bool ButtonsEnabled { get; set; } = true;
     public int ButtonCooldownSeconds { get; set; } = 3;
     public List<ulong> WhitelistedChannelIds { get; set; } = new();
+    public List<string> DisabledUserCommands { get; set; } = new();
 }
 
 class UserIgnoreSettings
