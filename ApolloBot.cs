@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using Discord;
@@ -57,6 +58,8 @@ class Program
 {
     private DiscordSocketClient? _client;
     private readonly Random _random = Random.Shared;
+    private static readonly HttpClient FoxHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private readonly ConcurrentDictionary<ulong, DateTime> _foxCooldowns = new();
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
@@ -1735,6 +1738,12 @@ class Program
             return;
         }
 
+        if (sub == "fox")
+        {
+            await SendRandomFoxAsync(message, textChannel);
+            return;
+        }
+
         if (sub == "perms")
         {
             await SendPermissionReport(textChannel);
@@ -2495,6 +2504,8 @@ class Program
                 "• Cooldowns\n" +
                 "• Persistence\n" +
                 "• User ignore system\n" +
+                "• User/server stats and achievements\n" +
+                "• Random fox command\n" +
                 "• Reply ping for original poster\n" +
                 "• Server enable/disable and whitelist settings\n" +
                 "• Slash roll command\n" +
@@ -2506,6 +2517,80 @@ class Program
             .Build();
 
         await channel.SendMessageAsync(embed: embed);
+    }
+
+    private async Task SendRandomFoxAsync(SocketUserMessage message, SocketTextChannel channel)
+    {
+        DateTime now = DateTime.UtcNow;
+        if (_foxCooldowns.TryGetValue(message.Author.Id, out DateTime lastUsed) &&
+            now - lastUsed < TimeSpan.FromSeconds(5))
+        {
+            int remaining = Math.Max(1, (int)Math.Ceiling((TimeSpan.FromSeconds(5) - (now - lastUsed)).TotalSeconds));
+            await channel.SendMessageAsync($"🦊 Give the foxes **{remaining}s** to catch up.");
+            return;
+        }
+
+        _foxCooldowns[message.Author.Id] = now;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://foxvx.com/");
+            request.Headers.UserAgent.ParseAdd("ApolloBot/1.0 (+https://apollobotdiscord.netlify.app/)");
+            request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml");
+
+            using HttpResponseMessage response = await FoxHttpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            string html = await response.Content.ReadAsStringAsync();
+
+            string? imageUrl = ExtractMetaContent(html, "og:image")
+                ?? ExtractMetaContent(html, "twitter:image");
+
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                throw new InvalidOperationException("Fox page did not expose an image meta tag.");
+
+            imageUrl = WebUtility.HtmlDecode(imageUrl.Trim());
+            if (Uri.TryCreate(new Uri("https://foxvx.com/"), imageUrl, out Uri? resolvedImageUri))
+                imageUrl = resolvedImageUri.ToString();
+
+            if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out Uri? validatedImageUri) ||
+                (validatedImageUri.Scheme != Uri.UriSchemeHttps && validatedImageUri.Scheme != Uri.UriSchemeHttp))
+            {
+                throw new InvalidOperationException("Fox page returned an invalid image URL.");
+            }
+
+            var embed = new EmbedBuilder()
+                .WithTitle("🦊 Here's a fox from ApolloBot")
+                .WithImageUrl(validatedImageUri.ToString())
+                .WithColor(Color.Orange)
+                .Build();
+
+            await channel.SendMessageAsync(embed: embed);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FOX] Failed to fetch random fox: {ex.Message}");
+            _foxCooldowns.TryRemove(message.Author.Id, out _);
+            await channel.SendMessageAsync("🦊 The foxes are hiding right now. Try again in a moment.");
+        }
+    }
+
+    private static string? ExtractMetaContent(string html, string propertyName)
+    {
+        string escaped = Regex.Escape(propertyName);
+        Match match = Regex.Match(
+            html,
+            $@"<meta\b[^>]*(?:property|name)\s*=\s*['\x22]{escaped}['\x22][^>]*content\s*=\s*['\x22](?<value>[^'\x22]+)['\x22][^>]*>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (!match.Success)
+        {
+            match = Regex.Match(
+                html,
+                $@"<meta\b[^>]*content\s*=\s*['\x22](?<value>[^'\x22]+)['\x22][^>]*(?:property|name)\s*=\s*['\x22]{escaped}['\x22][^>]*>",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        return match.Success ? match.Groups["value"].Value : null;
     }
 
     private async Task SendProviders(SocketTextChannel channel, ulong? ownerUserId = null)
@@ -3921,8 +4006,12 @@ class Program
             "**Public Commands**",
             "`!ab help` – Show this menu",
             "`!ab about` – What ApolloBot does",
+            "`!ab updates` – Show public planned updates",
+            "`!ab support` – Open support / bug report page",
+            "`!vote` – Open ApolloBot's voting link",
             "`!ab ping` – Check if the bot is alive",
             "`!ab providers` – Show configured providers",
+            "`!ab fox` – Get a random fox from ApolloBot",
             "`!ab perms` – Check channel permissions",
             "`!ab status` – Show server settings",
             "`!ab info <message link>` – Show relay info for an ApolloBot message",
