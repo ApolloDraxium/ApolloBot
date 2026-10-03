@@ -58,8 +58,9 @@ class Program
 {
     private DiscordSocketClient? _client;
     private readonly Random _random = Random.Shared;
-    private static readonly HttpClient FoxHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
-    private readonly ConcurrentDictionary<ulong, DateTime> _foxCooldowns = new();
+    private static readonly HttpClient AnimalHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private readonly ConcurrentDictionary<ulong, DateTime> _animalCooldowns = new();
+    private readonly ConcurrentDictionary<string, string> _lastAnimalImageUrls = new(StringComparer.OrdinalIgnoreCase);
     private bool _slashCommandsRegistered = false;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
@@ -1738,9 +1739,9 @@ class Program
             return;
         }
 
-        if (sub == "fox")
+        if (sub is "fox" or "cat" or "dog")
         {
-            await SendRandomFoxAsync(message, textChannel);
+            await SendRandomAnimalAsync(message, textChannel, sub);
             return;
         }
 
@@ -2505,7 +2506,7 @@ class Program
                 "• Persistence\n" +
                 "• User ignore system\n" +
                 "• User/server stats and achievements\n" +
-                "• Random fox command\n" +
+                "• Random fox, cat, and dog commands\n" +
                 "• Reply ping for original poster\n" +
                 "• Server enable/disable and whitelist settings\n" +
                 "• Slash roll command\n" +
@@ -2519,78 +2520,103 @@ class Program
         await channel.SendMessageAsync(embed: embed);
     }
 
-    private async Task SendRandomFoxAsync(SocketUserMessage message, SocketTextChannel channel)
+    private async Task SendRandomAnimalAsync(SocketUserMessage message, SocketTextChannel channel, string animal)
     {
         DateTime now = DateTime.UtcNow;
-        if (_foxCooldowns.TryGetValue(message.Author.Id, out DateTime lastUsed) &&
+        if (_animalCooldowns.TryGetValue(message.Author.Id, out DateTime lastUsed) &&
             now - lastUsed < TimeSpan.FromSeconds(5))
         {
             int remaining = Math.Max(1, (int)Math.Ceiling((TimeSpan.FromSeconds(5) - (now - lastUsed)).TotalSeconds));
-            await channel.SendMessageAsync($"🦊 Give the foxes **{remaining}s** to catch up.");
+            await channel.SendMessageAsync($"🐾 Give the animals **{remaining}s** to catch up.");
             return;
         }
 
-        _foxCooldowns[message.Author.Id] = now;
+        _animalCooldowns[message.Author.Id] = now;
+
+        string emoji = animal switch { "cat" => "🐱", "dog" => "🐶", _ => "🦊" };
+        string displayName = animal switch { "cat" => "cat", "dog" => "dog", _ => "fox" };
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://foxvx.com/");
-            request.Headers.UserAgent.ParseAdd("ApolloBot/1.0 (+https://apollobotdiscord.netlify.app/)");
-            request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml");
+            string? imageUrl = null;
+            _lastAnimalImageUrls.TryGetValue(animal, out string? previousImageUrl);
 
-            using HttpResponseMessage response = await FoxHttpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-            string html = await response.Content.ReadAsStringAsync();
-
-            string? imageUrl = ExtractMetaContent(html, "og:image")
-                ?? ExtractMetaContent(html, "twitter:image");
-
-            if (string.IsNullOrWhiteSpace(imageUrl))
-                throw new InvalidOperationException("Fox page did not expose an image meta tag.");
-
-            imageUrl = WebUtility.HtmlDecode(imageUrl.Trim());
-            if (Uri.TryCreate(new Uri("https://foxvx.com/"), imageUrl, out Uri? resolvedImageUri))
-                imageUrl = resolvedImageUri.ToString();
-
-            if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out Uri? validatedImageUri) ||
-                (validatedImageUri.Scheme != Uri.UriSchemeHttps && validatedImageUri.Scheme != Uri.UriSchemeHttp))
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                throw new InvalidOperationException("Fox page returned an invalid image URL.");
+                if (animal == "fox")
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get,
+                        $"https://randomfox.ca/floof/?ts={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{attempt}");
+                    request.Headers.UserAgent.ParseAdd("ApolloBot/1.0 (+https://apollobotdiscord.netlify.app/)");
+                    request.Headers.Accept.ParseAdd("application/json");
+                    using HttpResponseMessage response = await AnimalHttpClient.SendAsync(request);
+                    response.EnsureSuccessStatusCode();
+                    using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (document.RootElement.TryGetProperty("image", out JsonElement imageElement))
+                        imageUrl = imageElement.GetString()?.Trim();
+                }
+                else if (animal == "dog")
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get,
+                        $"https://dog.ceo/api/breeds/image/random?ts={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{attempt}");
+                    request.Headers.UserAgent.ParseAdd("ApolloBot/1.0 (+https://apollobotdiscord.netlify.app/)");
+                    request.Headers.Accept.ParseAdd("application/json");
+                    using HttpResponseMessage response = await AnimalHttpClient.SendAsync(request);
+                    response.EnsureSuccessStatusCode();
+                    using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (document.RootElement.TryGetProperty("message", out JsonElement imageElement))
+                        imageUrl = imageElement.GetString()?.Trim();
+                }
+                else
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get,
+                        $"https://cataas.com/cat?json=true&ts={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{attempt}");
+                    request.Headers.UserAgent.ParseAdd("ApolloBot/1.0 (+https://apollobotdiscord.netlify.app/)");
+                    request.Headers.Accept.ParseAdd("application/json");
+                    using HttpResponseMessage response = await AnimalHttpClient.SendAsync(request);
+                    response.EnsureSuccessStatusCode();
+                    using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    if (document.RootElement.TryGetProperty("url", out JsonElement urlElement))
+                    {
+                        string? catUrl = urlElement.GetString()?.Trim();
+                        if (!string.IsNullOrWhiteSpace(catUrl))
+                            imageUrl = catUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? catUrl : $"https://cataas.com{catUrl}";
+                    }
+                    else if (document.RootElement.TryGetProperty("_id", out JsonElement idElement))
+                    {
+                        string? catId = idElement.GetString()?.Trim();
+                        if (!string.IsNullOrWhiteSpace(catId))
+                            imageUrl = $"https://cataas.com/cat/{catId}";
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(imageUrl) &&
+                    !string.Equals(imageUrl, previousImageUrl, StringComparison.OrdinalIgnoreCase))
+                    break;
             }
 
+            if (string.IsNullOrWhiteSpace(imageUrl) ||
+                !Uri.TryCreate(imageUrl, UriKind.Absolute, out Uri? validatedImageUri) ||
+                validatedImageUri.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException($"{displayName} service returned an invalid image URL.");
+
+            imageUrl = validatedImageUri.ToString();
+            _lastAnimalImageUrls[animal] = imageUrl;
+
             var embed = new EmbedBuilder()
-                .WithTitle("🦊 Here's a fox from ApolloBot")
-                .WithImageUrl(validatedImageUri.ToString())
-                .WithColor(Color.Orange)
+                .WithTitle($"{emoji} Here's a {displayName} from ApolloBot")
+                .WithImageUrl(imageUrl)
+                .WithColor(animal == "fox" ? Color.Orange : animal == "cat" ? Color.Purple : Color.Blue)
                 .Build();
 
             await channel.SendMessageAsync(embed: embed);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FOX] Failed to fetch random fox: {ex.Message}");
-            _foxCooldowns.TryRemove(message.Author.Id, out _);
-            await channel.SendMessageAsync("🦊 The foxes are hiding right now. Try again in a moment.");
+            Console.WriteLine($"[ANIMAL:{animal.ToUpperInvariant()}] Failed to fetch random {displayName}: {ex.Message}");
+            _animalCooldowns.TryRemove(message.Author.Id, out _);
+            await channel.SendMessageAsync($"{emoji} The {displayName}s are hiding right now. Try again in a moment.");
         }
-    }
-
-    private static string? ExtractMetaContent(string html, string propertyName)
-    {
-        string escaped = Regex.Escape(propertyName);
-        Match match = Regex.Match(
-            html,
-            $@"<meta\b[^>]*(?:property|name)\s*=\s*['\x22]{escaped}['\x22][^>]*content\s*=\s*['\x22](?<value>[^'\x22]+)['\x22][^>]*>",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-        if (!match.Success)
-        {
-            match = Regex.Match(
-                html,
-                $@"<meta\b[^>]*content\s*=\s*['\x22](?<value>[^'\x22]+)['\x22][^>]*(?:property|name)\s*=\s*['\x22]{escaped}['\x22][^>]*>",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        }
-
-        return match.Success ? match.Groups["value"].Value : null;
     }
 
     private async Task SendProviders(SocketTextChannel channel, ulong? ownerUserId = null)
@@ -4012,6 +4038,8 @@ class Program
             "`!ab ping` – Check if the bot is alive",
             "`!ab providers` – Show configured providers",
             "`!ab fox` – Get a random fox from ApolloBot",
+            "`!ab cat` – Get a random cat from ApolloBot",
+            "`!ab dog` – Get a random dog from ApolloBot",
             "`!ab perms` – Check channel permissions",
             "`!ab status` – Show server settings",
             "`!ab info <message link>` – Show relay info for an ApolloBot message",
