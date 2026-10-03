@@ -217,6 +217,7 @@ class Program
         _client.LeftGuild += OnLeftGuild;
         _client.MessageReceived += MessageReceived;
         _client.ButtonExecuted += ButtonExecuted;
+        _client.SelectMenuExecuted += SelectMenuExecuted;
         _client.SlashCommandExecuted += SlashCommandExecuted;
 
         string? token = Environment.GetEnvironmentVariable("DISCORD_TOKEN");
@@ -457,10 +458,49 @@ class Program
                 .WithType(ApplicationCommandOptionType.String)
                 .WithRequired(true));
 
+        var guildContexts = new[] { InteractionContextType.Guild };
+        var guildInstall = new[] { ApplicationIntegrationType.GuildInstall };
+
+        SlashCommandBuilder SimpleGuildCommand(string name, string description) =>
+            new SlashCommandBuilder().WithName(name).WithDescription(description).WithContextTypes(guildContexts).WithIntegrationTypes(guildInstall);
+
+        var infoCommand = SimpleGuildCommand("info", "Show relay information for an ApolloBot message.")
+            .AddOption("message", ApplicationCommandOptionType.String, "Discord message link", isRequired: true);
+        var userStatsCommand = SimpleGuildCommand("userstats", "Show ApolloBot stats and achievements for a user.")
+            .AddOption("user", ApplicationCommandOptionType.User, "User to view", isRequired: false);
+        var embedFixCommand = SimpleGuildCommand("embedfix", "Enable or disable automatic embed fixing in this server.")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether embed fixing should be enabled", isRequired: true);
+        var silentCommand = SimpleGuildCommand("silent", "Enable or disable silent mode in this server.")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether silent mode should be enabled", isRequired: true);
+        var toggleButtonsCommand = SimpleGuildCommand("togglebuttons", "Enable or disable relay buttons in this server.")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether relay buttons should be enabled", isRequired: true);
+        var cooldownCommand = SimpleGuildCommand("cooldown", "Set the relay button cooldown for this server.")
+            .AddOption(new SlashCommandOptionBuilder().WithName("seconds").WithDescription("Cooldown from 1 to 30 seconds").WithType(ApplicationCommandOptionType.Integer).WithRequired(true).WithMinValue(1).WithMaxValue(30));
+        var whitelistCommand = SimpleGuildCommand("whitelist", "Manage which channels ApolloBot can fix links in.")
+            .AddOption(new SlashCommandOptionBuilder().WithName("action").WithDescription("What to do").WithType(ApplicationCommandOptionType.String).WithRequired(true).AddChoice("add", "add").AddChoice("remove", "remove").AddChoice("list", "list").AddChoice("clear", "clear"))
+            .AddOption("channel", ApplicationCommandOptionType.Channel, "Channel to add or remove", isRequired: false);
+
         ApplicationCommandProperties[] commands = new ApplicationCommandProperties[]
         {
-            rollCommand.Build(),
-            fixCommand.Build()
+            rollCommand.Build(), fixCommand.Build(),
+            SimpleGuildCommand("help", "Show ApolloBot's commands and help.").Build(),
+            SimpleGuildCommand("about", "See what ApolloBot does.").Build(),
+            SimpleGuildCommand("updates", "Show ApolloBot's planned updates.").Build(),
+            SimpleGuildCommand("support", "Open ApolloBot support and feedback.").Build(),
+            SimpleGuildCommand("vote", "Get ApolloBot's voting link.").Build(),
+            SimpleGuildCommand("ping", "Check ApolloBot's gateway latency.").Build(),
+            SimpleGuildCommand("providers", "Show ApolloBot's configured embed providers.").Build(),
+            SimpleGuildCommand("fox", "Get a random fox.").Build(),
+            SimpleGuildCommand("cat", "Get a random cat.").Build(),
+            SimpleGuildCommand("dog", "Get a random dog.").Build(),
+            SimpleGuildCommand("perms", "Check ApolloBot's permissions in this channel.").Build(),
+            SimpleGuildCommand("status", "Show ApolloBot's settings for this server.").Build(),
+            infoCommand.Build(), userStatsCommand.Build(),
+            SimpleGuildCommand("serverstats", "Show this server's ApolloBot stats and achievements.").Build(),
+            SimpleGuildCommand("usersettings", "Open your personal ApolloBot settings.").Build(),
+            SimpleGuildCommand("setup", "Open this server's ApolloBot setup summary.").Build(),
+            embedFixCommand.Build(), silentCommand.Build(), toggleButtonsCommand.Build(), cooldownCommand.Build(), whitelistCommand.Build(),
+            SimpleGuildCommand("reset", "Reset ApolloBot's settings for this server.").Build()
         };
 
         try
@@ -484,7 +524,7 @@ class Program
             Console.WriteLine("[SLASH] Clearing existing global slash commands so Discord refreshes command metadata and contexts.");
             await _client.BulkOverwriteGlobalApplicationCommandsAsync(commands);
 
-            Console.WriteLine("[SLASH] Registered global slash commands: /roll, /fix");
+            Console.WriteLine("[SLASH] Registered global slash commands: /fix, /roll, public commands, user settings, and server admin commands.");
             Console.WriteLine("[SLASH] Commands were registered with Guild + User install support and Guild/Bot DM/Private Channel contexts.");
             Console.WriteLine("[SLASH] Global commands should now be eligible for DM visibility, subject to Discord install/context propagation.");
         }
@@ -578,7 +618,7 @@ class Program
         if (detectedPlatforms.Count == 0)
             return;
 
-        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms);
+        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms, message.Author.Id);
         string newContent = ApplyAllReplacements(originalContent, providerIndexes, message.Author.Id);
 
         if (newContent == originalContent)
@@ -1741,7 +1781,7 @@ class Program
 
         if (sub is "fox" or "cat" or "dog")
         {
-            await SendRandomAnimalAsync(message, textChannel, sub);
+            await SendRandomAnimalAsync(message.Author.Id, textChannel, sub);
             return;
         }
 
@@ -1763,9 +1803,9 @@ class Program
             return;
         }
 
-        if (sub == "ignore")
+        if (sub == "usersettings" || sub == "ignore")
         {
-            await HandleIgnoreCommand(message, textChannel, parts);
+            await SendUserSettingsAsync(textChannel, message.Author.Id, textChannel.Guild.Id);
             return;
         }
 
@@ -1787,9 +1827,16 @@ class Program
             return;
         }
 
+        string[] adminCommands = { "on", "off", "silent", "togglebuttons", "cooldown", "reset", "whitelist" };
+        if (!adminCommands.Contains(sub, StringComparer.OrdinalIgnoreCase))
+        {
+            await textChannel.SendMessageAsync("❓ **Unrecognized command.** Use `!ab help` to see available commands.");
+            return;
+        }
+
         if (message.Author is not SocketGuildUser guildUser || !guildUser.GuildPermissions.ManageGuild)
         {
-            await textChannel.SendMessageAsync("You need **Manage Server** to use that command.");
+            await textChannel.SendMessageAsync("🔒 You need **Manage Server** to use that command.");
             return;
         }
 
@@ -1863,7 +1910,162 @@ class Program
             return;
         }
 
-        await SendApolloBotHelp(textChannel, message.Author);
+        await textChannel.SendMessageAsync("❓ **Unrecognized command.** Use `!ab help` to see available commands.");
+    }
+
+    private async Task SendUserSettingsAsync(SocketTextChannel channel, ulong userId, ulong guildId)
+    {
+        UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(userId);
+        Embed embed = BuildUserSettingsEmbed(settings, guildId);
+        MessageComponent components = BuildUserSettingsComponents(settings, userId, guildId, "twitter");
+        await channel.SendMessageAsync(embed: embed, components: components);
+    }
+
+    private Embed BuildUserSettingsEmbed(UserIgnoreSettings settings, ulong guildId)
+    {
+        bool ignoredHere = settings.IgnoredGuildIds.Contains(guildId);
+        string fixing = settings.IgnoreAllServers ? "Disabled everywhere" : ignoredHere ? "Disabled in this server" : "Enabled";
+        string providerSummary = string.Join("\n", _providers.Keys.OrderBy(FormatPlatformName).Select(platform =>
+        {
+            string value = settings.PreferredProviders.TryGetValue(platform, out string? preferred) ? preferred : "Automatic";
+            return $"**{FormatPlatformName(platform)}:** {value}";
+        }));
+
+        return new EmbedBuilder()
+            .WithTitle("⚙️ ApolloBot User Settings")
+            .WithDescription("Change how ApolloBot behaves for you. Your settings follow you between servers.")
+            .AddField("🔗 Embed Fixing", fixing, false)
+            .AddField("🌐 Preferred Providers", providerSummary, false)
+            .AddField("🔔 Reply Notifications", settings.ReplyNotificationsEnabled ? "Enabled" : "Disabled", true)
+            .WithFooter("Choose a platform below, then pick the provider you prefer. Automatic uses ApolloBot's default.")
+            .WithColor(Color.Teal)
+            .Build();
+    }
+
+    private MessageComponent BuildUserSettingsComponents(UserIgnoreSettings settings, ulong userId, ulong guildId, string selectedPlatform)
+    {
+        if (!_providers.ContainsKey(selectedPlatform))
+            selectedPlatform = _providers.Keys.FirstOrDefault() ?? "twitter";
+
+        var platformMenu = new SelectMenuBuilder()
+            .WithCustomId($"usersettings_platform:{userId}:{guildId}")
+            .WithPlaceholder("Choose a platform")
+            .WithMinValues(1)
+            .WithMaxValues(1);
+
+        foreach (string platform in _providers.Keys.OrderBy(FormatPlatformName).Take(25))
+            platformMenu.AddOption(FormatPlatformName(platform), platform, isDefault: platform.Equals(selectedPlatform, StringComparison.OrdinalIgnoreCase));
+
+        var providerMenu = new SelectMenuBuilder()
+            .WithCustomId($"usersettings_provider:{userId}:{guildId}:{selectedPlatform}")
+            .WithPlaceholder($"Preferred {FormatPlatformName(selectedPlatform)} provider")
+            .WithMinValues(1)
+            .WithMaxValues(1)
+            .AddOption("Automatic", "__auto__", "Use ApolloBot's default provider", isDefault: !settings.PreferredProviders.ContainsKey(selectedPlatform));
+
+        if (_providers.TryGetValue(selectedPlatform, out List<string>? providers))
+        {
+            foreach (string provider in providers.Take(24))
+            {
+                bool selected = settings.PreferredProviders.TryGetValue(selectedPlatform, out string? preferred) &&
+                                string.Equals(preferred, provider, StringComparison.OrdinalIgnoreCase);
+                providerMenu.AddOption(provider, provider, isDefault: selected);
+            }
+        }
+
+        var fixingMenu = new SelectMenuBuilder()
+            .WithCustomId($"usersettings_fixing:{userId}:{guildId}")
+            .WithPlaceholder("Embed fixing for your links")
+            .WithMinValues(1)
+            .WithMaxValues(1)
+            .AddOption("Enabled", "enabled", "Fix my links normally", isDefault: !settings.IgnoreAllServers && !settings.IgnoredGuildIds.Contains(guildId))
+            .AddOption("Disabled in this server", "server", "Do not fix my links in this server", isDefault: !settings.IgnoreAllServers && settings.IgnoredGuildIds.Contains(guildId))
+            .AddOption("Disabled everywhere", "global", "Do not fix my links in any server", isDefault: settings.IgnoreAllServers);
+
+        var replyMenu = new SelectMenuBuilder()
+            .WithCustomId($"usersettings_replies:{userId}:{guildId}")
+            .WithPlaceholder("Reply notifications")
+            .WithMinValues(1)
+            .WithMaxValues(1)
+            .AddOption("Reply notifications on", "on", "Ping me when someone replies to my relay", isDefault: settings.ReplyNotificationsEnabled)
+            .AddOption("Reply notifications off", "off", "Do not ping me for relay replies", isDefault: !settings.ReplyNotificationsEnabled);
+
+        return new ComponentBuilder()
+            .WithSelectMenu(platformMenu)
+            .WithSelectMenu(providerMenu)
+            .WithSelectMenu(fixingMenu)
+            .WithSelectMenu(replyMenu)
+            .WithButton("Reset to defaults", $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
+            .Build();
+    }
+
+    private async Task SelectMenuExecuted(SocketMessageComponent component)
+    {
+        string customId = component.Data.CustomId;
+        if (!customId.StartsWith("usersettings_", StringComparison.Ordinal))
+            return;
+
+        string[] parts = customId.Split(':');
+        if (parts.Length < 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
+        {
+            await component.RespondAsync("That settings menu is no longer valid.", ephemeral: true);
+            return;
+        }
+
+        if (component.User.Id != ownerUserId)
+        {
+            await component.RespondAsync("These settings belong to the person who opened the menu. Use `/usersettings` to open your own.", ephemeral: true);
+            return;
+        }
+
+        UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(ownerUserId);
+        string value = component.Data.Values.FirstOrDefault() ?? "";
+        string selectedPlatform = "twitter";
+
+        if (customId.StartsWith("usersettings_platform:", StringComparison.Ordinal))
+        {
+            selectedPlatform = value;
+        }
+        else if (customId.StartsWith("usersettings_provider:", StringComparison.Ordinal) && parts.Length >= 4)
+        {
+            selectedPlatform = parts[3];
+            if (value == "__auto__")
+                settings.PreferredProviders.Remove(selectedPlatform);
+            else if (_providers.TryGetValue(selectedPlatform, out List<string>? providers) && providers.Contains(value, StringComparer.OrdinalIgnoreCase))
+                settings.PreferredProviders[selectedPlatform] = value;
+            SaveUserIgnoreSettings();
+        }
+        else if (customId.StartsWith("usersettings_fixing:", StringComparison.Ordinal))
+        {
+            if (value == "global")
+            {
+                settings.IgnoreAllServers = true;
+            }
+            else
+            {
+                settings.IgnoreAllServers = false;
+                if (value == "server")
+                {
+                    if (!settings.IgnoredGuildIds.Contains(guildId)) settings.IgnoredGuildIds.Add(guildId);
+                }
+                else
+                {
+                    settings.IgnoredGuildIds.Remove(guildId);
+                }
+            }
+            SaveUserIgnoreSettings();
+        }
+        else if (customId.StartsWith("usersettings_replies:", StringComparison.Ordinal))
+        {
+            settings.ReplyNotificationsEnabled = value != "off";
+            SaveUserIgnoreSettings();
+        }
+
+        await component.UpdateAsync(msg =>
+        {
+            msg.Embed = Optional.Create(BuildUserSettingsEmbed(settings, guildId));
+            msg.Components = Optional.Create(BuildUserSettingsComponents(settings, ownerUserId, guildId, selectedPlatform));
+        });
     }
 
     private async Task HandleIgnoreCommand(SocketUserMessage message, SocketTextChannel textChannel, string[] parts)
@@ -2520,10 +2722,10 @@ class Program
         await channel.SendMessageAsync(embed: embed);
     }
 
-    private async Task SendRandomAnimalAsync(SocketUserMessage message, SocketTextChannel channel, string animal)
+    private async Task SendRandomAnimalAsync(ulong userId, SocketTextChannel channel, string animal)
     {
         DateTime now = DateTime.UtcNow;
-        if (_animalCooldowns.TryGetValue(message.Author.Id, out DateTime lastUsed) &&
+        if (_animalCooldowns.TryGetValue(userId, out DateTime lastUsed) &&
             now - lastUsed < TimeSpan.FromSeconds(5))
         {
             int remaining = Math.Max(1, (int)Math.Ceiling((TimeSpan.FromSeconds(5) - (now - lastUsed)).TotalSeconds));
@@ -2531,7 +2733,7 @@ class Program
             return;
         }
 
-        _animalCooldowns[message.Author.Id] = now;
+        _animalCooldowns[userId] = now;
 
         string emoji = animal switch { "cat" => "🐱", "dog" => "🐶", _ => "🦊" };
         string displayName = animal switch { "cat" => "cat", "dog" => "dog", _ => "fox" };
@@ -2614,7 +2816,7 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"[ANIMAL:{animal.ToUpperInvariant()}] Failed to fetch random {displayName}: {ex.Message}");
-            _animalCooldowns.TryRemove(message.Author.Id, out _);
+            _animalCooldowns.TryRemove(userId, out _);
             await channel.SendMessageAsync($"{emoji} The {displayName}s are hiding right now. Try again in a moment.");
         }
     }
@@ -3108,39 +3310,136 @@ class Program
         {
             switch (command.Data.Name)
             {
-                case "roll":
-                    await HandleRollSlashCommand(command);
-                    return;
-
-                case "fix":
-                    await HandleFixSlashCommand(command);
-                    return;
-
+                case "roll": await HandleRollSlashCommand(command); return;
+                case "fix": await HandleFixSlashCommand(command); return;
+                case "usersettings": await HandleUserSettingsSlashCommand(command); return;
+                case "userstats": await HandleUserStatsSlashCommand(command); return;
+                case "serverstats": await HandleServerStatsSlashCommand(command); return;
+                case "fox": case "cat": case "dog": await HandleAnimalSlashCommand(command); return;
+                case "ping": await command.RespondAsync($"🏓 Pong! Gateway latency: **{_client?.Latency ?? 0}ms**"); return;
+                case "embedfix": case "silent": case "togglebuttons": case "cooldown": case "whitelist": case "reset":
+                    await HandleAdminSlashCommand(command); return;
+                case "setup": await HandleSetupSlashCommand(command); return;
+                case "help": case "about": case "updates": case "support": case "vote": case "providers": case "perms": case "status": case "info":
+                    await HandleLegacyPublicSlashCommand(command); return;
                 default:
                     if (!command.HasResponded)
-                        await command.RespondAsync("That slash command is not configured on this build yet.", ephemeral: true);
+                        await command.RespondAsync("❓ **Unrecognized command.** Use `/help` to see available commands.", ephemeral: true);
                     return;
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error handling slash command '{command.Data.Name}': {ex}");
-
             try
             {
                 string responseText = command.Channel is SocketTextChannel textChannel && IsMissingPermissionsError(ex)
                     ? BuildSlashPermissionFailureMessage(command, textChannel)
-                    : "Something went wrong while running that slash command.";
-
-                if (!command.HasResponded)
-                    await command.RespondAsync(responseText, ephemeral: true);
-                else
-                    await command.FollowupAsync(responseText, ephemeral: true);
+                    : "⚠️ I couldn't run that command. Try again in a moment.";
+                if (!command.HasResponded) await command.RespondAsync(responseText, ephemeral: true);
+                else await command.FollowupAsync(responseText, ephemeral: true);
             }
-            catch
-            {
-            }
+            catch { }
         }
+    }
+
+    private async Task HandleUserSettingsSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel)
+        {
+            await command.RespondAsync("User settings are available inside servers. `/fix` and `/roll` are the only ApolloBot commands available in DMs.", ephemeral: true);
+            return;
+        }
+        UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(command.User.Id);
+        await command.RespondAsync(embed: BuildUserSettingsEmbed(settings, channel.Guild.Id), components: BuildUserSettingsComponents(settings, command.User.Id, channel.Guild.Id, "twitter"), ephemeral: true);
+    }
+
+    private async Task HandleUserStatsSlashCommand(SocketSlashCommand command)
+    {
+        IUser target = command.Data.Options.FirstOrDefault(x => x.Name == "user")?.Value as IUser ?? command.User;
+        string displayName = target.GlobalName ?? target.Username;
+        string avatarUrl = target.GetAvatarUrl(ImageFormat.Auto, 256) ?? target.GetDefaultAvatarUrl() ?? "";
+        await command.RespondAsync(embed: BuildUserStatsEmbed(target.Id, displayName, avatarUrl), components: BuildStatsProfileComponents("user", target.Id, command.User.Id));
+    }
+
+    private async Task HandleServerStatsSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command can only be used in a server.", ephemeral: true); return; }
+        await command.RespondAsync(embed: BuildServerStatsEmbed(channel.Guild), components: BuildStatsProfileComponents("server", channel.Guild.Id, command.User.Id));
+    }
+
+    private async Task HandleAnimalSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Animal commands are available inside servers.", ephemeral: true); return; }
+        await command.DeferAsync(ephemeral: true);
+        await SendRandomAnimalAsync(command.User.Id, channel, command.Data.Name);
+        await command.DeleteOriginalResponseAsync();
+    }
+
+    private bool SlashUserCanManageGuild(SocketSlashCommand command) =>
+        command.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
+
+    private async Task HandleSetupSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Setup is only available inside servers.", ephemeral: true); return; }
+        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to open server setup.", ephemeral: true); return; }
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        string channels = settings.WhitelistedChannelIds.Count == 0 ? "All channels" : $"{settings.WhitelistedChannelIds.Count} whitelisted channel(s)";
+        var embed = new EmbedBuilder().WithTitle("🛠️ ApolloBot Server Setup")
+            .WithDescription("Current settings for this server. Use the slash commands below to change them.")
+            .AddField("Embed Fixing", settings.Enabled ? "Enabled" : "Disabled", true)
+            .AddField("Channels", channels, true)
+            .AddField("Relay Buttons", settings.ButtonsEnabled ? "Enabled" : "Disabled", true)
+            .AddField("Silent Mode", settings.SilentMode ? "Enabled" : "Disabled", true)
+            .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} seconds", true)
+            .AddField("Commands", "`/embedfix` `/whitelist` `/silent` `/togglebuttons` `/cooldown` `/reset`", false)
+            .WithColor(Color.Teal).Build();
+        await command.RespondAsync(embed: embed, ephemeral: true);
+    }
+
+    private async Task HandleAdminSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command can only be used in a server.", ephemeral: true); return; }
+        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to use that command.", ephemeral: true); return; }
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        string name = command.Data.Name;
+        if (name == "embedfix") { settings.Enabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Embed fixing is now **{(settings.Enabled ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
+        if (name == "silent") { settings.SilentMode = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Silent mode is now **{(settings.SilentMode ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
+        if (name == "togglebuttons") { settings.ButtonsEnabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay buttons are now **{(settings.ButtonsEnabled ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
+        if (name == "cooldown") { settings.ButtonCooldownSeconds = Convert.ToInt32(command.Data.Options.First(x => x.Name == "seconds").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay button cooldown set to **{settings.ButtonCooldownSeconds} seconds**.", ephemeral: true); return; }
+        if (name == "reset") { settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3; settings.WhitelistedChannelIds.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ ApolloBot's server settings have been reset to defaults.", ephemeral: true); return; }
+        if (name == "whitelist")
+        {
+            string action = command.Data.Options.First(x => x.Name == "action").Value?.ToString() ?? "list";
+            SocketGuildChannel? target = command.Data.Options.FirstOrDefault(x => x.Name == "channel")?.Value as SocketGuildChannel;
+            if (action == "list") { string list = settings.WhitelistedChannelIds.Count == 0 ? "No whitelist is set. ApolloBot can work in all channels." : string.Join("\n", settings.WhitelistedChannelIds.Select(id => $"<#{id}>")); await command.RespondAsync(list, ephemeral: true); return; }
+            if (action == "clear") { settings.WhitelistedChannelIds.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ Channel whitelist cleared. ApolloBot can work in all channels again.", ephemeral: true); return; }
+            if (target == null) { await command.RespondAsync("Choose a channel when adding or removing a whitelist entry.", ephemeral: true); return; }
+            if (action == "add") { if (!settings.WhitelistedChannelIds.Contains(target.Id)) settings.WhitelistedChannelIds.Add(target.Id); SaveGuildSettings(); await command.RespondAsync($"✅ <#{target.Id}> added to the whitelist.", ephemeral: true); return; }
+            if (action == "remove") { settings.WhitelistedChannelIds.Remove(target.Id); SaveGuildSettings(); await command.RespondAsync($"✅ <#{target.Id}> removed from the whitelist.", ephemeral: true); return; }
+        }
+    }
+
+    private async Task HandleLegacyPublicSlashCommand(SocketSlashCommand command)
+    {
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command is available inside servers. `/fix` and `/roll` are available in DMs.", ephemeral: true); return; }
+        await command.DeferAsync(ephemeral: true);
+        switch (command.Data.Name)
+        {
+            case "help": await SendApolloBotHelp(channel, command.User); break;
+            case "about": await SendAbout(channel); break;
+            case "updates": await SendPlannedUpdates(channel); break;
+            case "support": await SendSupportMessage(channel); break;
+            case "vote": await SendVoteMessage(channel, command.User); break;
+            case "providers": await SendProviders(channel); break;
+            case "perms": await SendPermissionReport(channel); break;
+            case "status": await SendGuildStatus(channel, GetOrCreateGuildSettings(channel.Guild.Id)); break;
+            case "info":
+                string link = command.Data.Options.FirstOrDefault(x => x.Name == "message")?.Value?.ToString() ?? "";
+                await HandleInfoCommand(channel, new[] { "info", link });
+                break;
+        }
+        await command.DeleteOriginalResponseAsync();
     }
 
     private async Task HandleFixSlashCommand(SocketSlashCommand command)
@@ -3164,7 +3463,7 @@ class Program
             return;
         }
 
-        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms);
+        Dictionary<string, int> providerIndexes = CreateDefaultProviderIndexes(detectedPlatforms, command.User.Id);
         string newContent = ApplyAllReplacements(rawText, providerIndexes, command.User.Id);
 
         if (newContent == rawText)
@@ -3632,6 +3931,33 @@ class Program
     {
         string customId = component.Data.CustomId;
 
+        if (customId.StartsWith("usersettings_reset:", StringComparison.Ordinal))
+        {
+            string[] parts = customId.Split(':');
+            if (parts.Length != 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
+            {
+                await component.RespondAsync("That settings button is no longer valid.", ephemeral: true);
+                return;
+            }
+            if (component.User.Id != ownerUserId)
+            {
+                await component.RespondAsync("These settings belong to the person who opened the menu. Use `/usersettings` to open your own.", ephemeral: true);
+                return;
+            }
+            UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(ownerUserId);
+            settings.IgnoreAllServers = false;
+            settings.IgnoredGuildIds.Clear();
+            settings.PreferredProviders.Clear();
+            settings.ReplyNotificationsEnabled = true;
+            SaveUserIgnoreSettings();
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(BuildUserSettingsEmbed(settings, guildId));
+                msg.Components = Optional.Create(BuildUserSettingsComponents(settings, ownerUserId, guildId, "twitter"));
+            });
+            return;
+        }
+
         if (customId.StartsWith("owner_delete:", StringComparison.Ordinal))
         {
             await HandleOwnerDeleteButtonAsync(component);
@@ -4029,59 +4355,43 @@ class Program
     {
         var lines = new List<string>
         {
-            "**Public Commands**",
-            "`!ab help` – Show this menu",
-            "`!ab about` – What ApolloBot does",
-            "`!ab updates` – Show public planned updates",
-            "`!ab support` – Open support / bug report page",
-            "`!vote` – Open ApolloBot's voting link",
-            "`!ab ping` – Check if the bot is alive",
-            "`!ab providers` – Show configured providers",
-            "`!ab fox` – Get a random fox from ApolloBot",
-            "`!ab cat` – Get a random cat from ApolloBot",
-            "`!ab dog` – Get a random dog from ApolloBot",
-            "`!ab perms` – Check channel permissions",
-            "`!ab status` – Show server settings",
-            "`!ab info <message link>` – Show relay info for an ApolloBot message",
-            "`!ab userstats [@user|userID]` – Show global ApolloBot stats and achievements for a user",
-            "`!ab serverstats` – Show this server's ApolloBot activity and achievements",
-            "`!support` – Open support / bug report page",
-            "`!ab ignore on` – Ignore your embeds in this server",
-            "`!ab ignore off` – Stop ignoring your embeds in this server",
-            "`!ab ignore all` – Toggle ignore in all servers",
-            "`/roll` – Roll dice"
+            "**Getting Started**",
+            "Most ApolloBot commands are available as slash commands. Prefix commands are still supported.",
+            "`/usersettings` or `!ab usersettings` – Open your personal settings",
+            "`/about` or `!ab about` – What ApolloBot does",
+            "`/support` or `!ab support` – Support, bug reports, and feedback",
+            "",
+            "**Embeds & Providers**",
+            "`/providers` or `!ab providers` – See available embed providers",
+            "`/info` or `!ab info <message link>` – View relay information",
+            "`/perms` or `!ab perms` – Check ApolloBot's channel permissions",
+            "",
+            "**Stats & Extras**",
+            "`/userstats` or `!ab userstats [@user|userID]` – User stats and achievements",
+            "`/serverstats` or `!ab serverstats` – Server stats and achievements",
+            "`/fox` `/cat` `/dog` – Random animal pictures",
+            "`/roll` – Roll dice",
+            "`/updates` – Planned updates",
+            "`/vote` – Vote for ApolloBot",
+            "`/ping` – Check gateway latency"
         };
 
         if (isAdmin)
         {
             lines.Add("");
-            lines.Add("**Admin Commands**");
-            lines.Add("`!embedfix on` – Enable embed fixing");
-            lines.Add("`!embedfix off` – Disable embed fixing");
-            lines.Add("`!ab whitelist add #channel`");
-            lines.Add("`!ab whitelist remove #channel`");
-            lines.Add("`!ab whitelist list`");
-            lines.Add("`!ab whitelist clear`");
-            lines.Add("`!ab silent on` – Hide relay buttons in this server");
-            lines.Add("`!ab silent off` – Show relay buttons again");
-            lines.Add("`!ab togglebuttons on` – Enable relay buttons");
-            lines.Add("`!ab togglebuttons off` – Disable relay buttons");
-            lines.Add("`!ab cooldown <1-30>` – Set the relay button cooldown");
-            lines.Add("`!ab reset confirm` – Reset ApolloBot settings for this server");
+            lines.Add("**Server Settings**");
+            lines.Add("`/setup` – View the server's ApolloBot setup");
+            lines.Add("`/embedfix` – Enable or disable embed fixing");
+            lines.Add("`/whitelist` – Manage allowed channels");
+            lines.Add("`/silent` – Change silent mode");
+            lines.Add("`/togglebuttons` – Enable or disable relay buttons");
+            lines.Add("`/cooldown` – Set the relay button cooldown");
+            lines.Add("`/reset` – Reset server settings");
         }
 
         lines.Add("");
-        lines.Add("**Roll Examples**");
-        lines.Add("`/roll`");
-        lines.Add("`/roll dice:1d20`");
-        lines.Add("`/roll dice:1d20+6`");
-        lines.Add("`/roll dice:1d20 mode:advantage`");
-        lines.Add("`/roll dice:1d20+4 mode:disadvantage`");
-        lines.Add("`/roll dice:1d20+7 exhaustion:2`");
-        lines.Add("`/roll dice:2d6+3 resistant:true`");
-        lines.Add("`/roll dice:8d6 vulnerable:true`");
-        lines.Add("`/roll dice:2d6+3`");
-
+        lines.Add("**DM Commands**");
+        lines.Add("`/fix` and `/roll` are available when ApolloBot is added to your account.");
         return lines;
     }
 
@@ -4783,12 +5093,26 @@ class Program
         return platforms;
     }
 
-    private Dictionary<string, int> CreateDefaultProviderIndexes(List<string> platforms)
+    private Dictionary<string, int> CreateDefaultProviderIndexes(List<string> platforms, ulong userId)
     {
         var indexes = new Dictionary<string, int>();
+        UserIgnoreSettings userSettings = GetOrCreateUserIgnoreSettings(userId);
 
         foreach (string platform in platforms)
-            indexes[platform] = 0;
+        {
+            int index = 0;
+            List<string> providers = GetProvidersForPlatform(platform, userId);
+
+            if (userSettings.PreferredProviders.TryGetValue(platform, out string? preferredProvider))
+            {
+                int preferredIndex = providers.FindIndex(x =>
+                    string.Equals(x, preferredProvider, StringComparison.OrdinalIgnoreCase));
+                if (preferredIndex >= 0)
+                    index = preferredIndex;
+            }
+
+            indexes[platform] = index;
+        }
 
         return indexes;
     }
@@ -5389,6 +5713,10 @@ class Program
                 return;
 
             if (replyMessage.Author.Id == relayState.OriginalAuthorId)
+                return;
+
+            UserIgnoreSettings userSettings = GetOrCreateUserIgnoreSettings(relayState.OriginalAuthorId);
+            if (!userSettings.ReplyNotificationsEnabled)
                 return;
 
             string jumpUrl = $"https://discord.com/channels/{textChannel.Guild.Id}/{textChannel.Id}/{replyMessage.Id}";
@@ -6109,7 +6437,11 @@ class Program
             _userIgnoreSettings.Clear();
 
             foreach ((ulong userId, UserIgnoreSettings settings) in loaded)
+            {
+                settings.IgnoredGuildIds ??= new List<ulong>();
+                settings.PreferredProviders ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 _userIgnoreSettings[userId] = settings;
+            }
 
             Console.WriteLine($"Loaded {_userIgnoreSettings.Count} user ignore profile(s) from disk.");
         }
@@ -6267,4 +6599,6 @@ class UserIgnoreSettings
     public ulong UserId { get; set; }
     public bool IgnoreAllServers { get; set; } = false;
     public List<ulong> IgnoredGuildIds { get; set; } = new();
+    public Dictionary<string, string> PreferredProviders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool ReplyNotificationsEnabled { get; set; } = true;
 }
