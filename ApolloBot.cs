@@ -464,19 +464,24 @@ class Program
         SlashCommandBuilder SimpleGuildCommand(string name, string description) =>
             new SlashCommandBuilder().WithName(name).WithDescription(description).WithContextTypes(guildContexts).WithIntegrationTypes(guildInstall);
 
+        // Admin commands are hidden from members who do not have Manage Server.
+        // Discord applies this in the slash-command picker before the interaction reaches ApolloBot.
+        SlashCommandBuilder AdminGuildCommand(string name, string description) =>
+            SimpleGuildCommand(name, description).WithDefaultMemberPermissions(GuildPermission.ManageGuild);
+
         var infoCommand = SimpleGuildCommand("info", "Show relay information for an ApolloBot message.")
             .AddOption("message", ApplicationCommandOptionType.String, "Discord message link", isRequired: true);
         var userStatsCommand = SimpleGuildCommand("userstats", "Show ApolloBot stats and achievements for a user.")
             .AddOption("user", ApplicationCommandOptionType.User, "User to view", isRequired: false);
-        var embedFixCommand = SimpleGuildCommand("embedfix", "Enable or disable automatic embed fixing in this server.")
+        var embedFixCommand = AdminGuildCommand("embedfix", "Enable or disable automatic embed fixing in this server.")
             .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether embed fixing should be enabled", isRequired: true);
-        var silentCommand = SimpleGuildCommand("silent", "Enable or disable silent mode in this server.")
+        var silentCommand = AdminGuildCommand("silent", "Enable or disable silent mode in this server.")
             .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether silent mode should be enabled", isRequired: true);
-        var toggleButtonsCommand = SimpleGuildCommand("togglebuttons", "Enable or disable relay buttons in this server.")
+        var toggleButtonsCommand = AdminGuildCommand("togglebuttons", "Enable or disable relay buttons in this server.")
             .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether relay buttons should be enabled", isRequired: true);
-        var cooldownCommand = SimpleGuildCommand("cooldown", "Set the relay button cooldown for this server.")
+        var cooldownCommand = AdminGuildCommand("cooldown", "Set the relay button cooldown for this server.")
             .AddOption(new SlashCommandOptionBuilder().WithName("seconds").WithDescription("Cooldown from 1 to 30 seconds").WithType(ApplicationCommandOptionType.Integer).WithRequired(true).WithMinValue(1).WithMaxValue(30));
-        var whitelistCommand = SimpleGuildCommand("whitelist", "Manage which channels ApolloBot can fix links in.")
+        var whitelistCommand = AdminGuildCommand("whitelist", "Manage which channels ApolloBot can fix links in.")
             .AddOption(new SlashCommandOptionBuilder().WithName("action").WithDescription("What to do").WithType(ApplicationCommandOptionType.String).WithRequired(true).AddChoice("add", "add").AddChoice("remove", "remove").AddChoice("list", "list").AddChoice("clear", "clear"))
             .AddOption("channel", ApplicationCommandOptionType.Channel, "Channel to add or remove", isRequired: false);
 
@@ -498,9 +503,9 @@ class Program
             infoCommand.Build(), userStatsCommand.Build(),
             SimpleGuildCommand("serverstats", "Show this server's ApolloBot stats and achievements.").Build(),
             SimpleGuildCommand("usersettings", "Open your personal ApolloBot settings.").Build(),
-            SimpleGuildCommand("setup", "Open this server's ApolloBot setup summary.").Build(),
+            AdminGuildCommand("setup", "Open this server's ApolloBot setup summary.").Build(),
             embedFixCommand.Build(), silentCommand.Build(), toggleButtonsCommand.Build(), cooldownCommand.Build(), whitelistCommand.Build(),
-            SimpleGuildCommand("reset", "Reset ApolloBot's settings for this server.").Build()
+            AdminGuildCommand("reset", "Reset ApolloBot's settings for this server.").Build()
         };
 
         try
