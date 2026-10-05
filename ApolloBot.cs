@@ -2146,18 +2146,6 @@ class Program
                 T("usersettings.disable_global_description"),
                 isDefault: settings.IgnoreAllServers);
 
-        var replyMenu = new SelectMenuBuilder()
-            .WithCustomId($"usersettings_replies:{userId}:{guildId}")
-            .WithPlaceholder(T("usersettings.reply_notifications"))
-            .WithMinValues(1)
-            .WithMaxValues(1)
-            .AddOption(T("usersettings.replies_on"), "on",
-                T("usersettings.replies_on_description"),
-                isDefault: settings.ReplyNotificationsEnabled)
-            .AddOption(T("usersettings.replies_off"), "off",
-                T("usersettings.replies_off_description"),
-                isDefault: !settings.ReplyNotificationsEnabled);
-
         var languageMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_language:{userId}:{guildId}")
             .WithPlaceholder(T("usersettings.personal_language"))
@@ -2173,13 +2161,15 @@ class Program
                 isDefault: language.Equals(personalLanguage, StringComparison.OrdinalIgnoreCase));
         }
 
+        string replyButtonLabel = $"{T("usersettings.reply_notifications")}: {(settings.ReplyNotificationsEnabled ? T("common.enabled") : T("common.disabled"))}";
+
         return new ComponentBuilder()
-            .WithSelectMenu(platformMenu)
-            .WithSelectMenu(providerMenu)
-            .WithSelectMenu(fixingMenu)
-            .WithSelectMenu(replyMenu)
-            .WithSelectMenu(languageMenu)
-            .WithButton(T("usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
+            .WithSelectMenu(platformMenu, 0)
+            .WithSelectMenu(providerMenu, 1)
+            .WithSelectMenu(fixingMenu, 2)
+            .WithSelectMenu(languageMenu, 3)
+            .WithButton(replyButtonLabel, $"usersettings_toggle_replies:{userId}:{guildId}", settings.ReplyNotificationsEnabled ? ButtonStyle.Success : ButtonStyle.Secondary, row: 4)
+            .WithButton(T("usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary, row: 4)
             .Build();
     }
 
@@ -4253,6 +4243,32 @@ class Program
                 await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildServerSetupEmbed(setupChannel.Guild, guildSettings)); msg.Components = Optional.Create(BuildServerSetupComponents(setupGuildId)); });
                 return;
             }
+        }
+
+        if (customId.StartsWith("usersettings_toggle_replies:", StringComparison.Ordinal))
+        {
+            string[] parts = customId.Split(':');
+            if (parts.Length != 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
+            {
+                await component.RespondAsync(LC(component, "errors.settings_button_expired"), ephemeral: true);
+                return;
+            }
+            if (component.User.Id != ownerUserId)
+            {
+                await component.RespondAsync(LC(component, "errors.settings_owner"), ephemeral: true);
+                return;
+            }
+
+            UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(ownerUserId);
+            settings.ReplyNotificationsEnabled = !settings.ReplyNotificationsEnabled;
+            SaveUserIgnoreSettings();
+
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(BuildUserSettingsEmbed(settings, guildId));
+                msg.Components = Optional.Create(BuildUserSettingsComponents(settings, ownerUserId, guildId, "twitter"));
+            });
+            return;
         }
 
         if (customId.StartsWith("usersettings_reset:", StringComparison.Ordinal))
