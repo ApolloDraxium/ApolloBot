@@ -59,9 +59,11 @@ class Program
     private DiscordSocketClient? _client;
     private readonly Random _random = Random.Shared;
     private static readonly HttpClient AnimalHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private static readonly HttpClient TopGgHttpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly ConcurrentDictionary<ulong, DateTime> _animalCooldowns = new();
     private readonly ConcurrentDictionary<string, string> _lastAnimalImageUrls = new(StringComparer.OrdinalIgnoreCase);
     private bool _slashCommandsRegistered = false;
+    private int _topGgStatsLoopStarted = 0;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
     private DateTime _sessionStartedAtUtc = DateTime.UtcNow;
@@ -275,6 +277,63 @@ class Program
         {
             await RegisterSlashCommandsAsync();
             _slashCommandsRegistered = true;
+        }
+
+        // Report the current server count to Top.gg as soon as Discord is ready.
+        await ReportTopGgStatsAsync();
+
+        // Ready can fire again after a reconnect, so only start one background reporter.
+        if (Interlocked.Exchange(ref _topGgStatsLoopStarted, 1) == 0)
+            _ = Task.Run(TopGgStatsLoopAsync);
+    }
+
+    private async Task TopGgStatsLoopAsync()
+    {
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(30));
+            await ReportTopGgStatsAsync();
+        }
+    }
+
+    private async Task ReportTopGgStatsAsync()
+    {
+        if (_client?.CurrentUser == null)
+            return;
+
+        string? topGgToken = Environment.GetEnvironmentVariable("TOPGG_TOKEN")?.Trim();
+        if (string.IsNullOrWhiteSpace(topGgToken))
+        {
+            Console.WriteLine("[TOP.GG] TOPGG_TOKEN is not set; skipping server-count update.");
+            return;
+        }
+
+        try
+        {
+            int serverCount = _client.Guilds.Count;
+            string endpoint = $"https://top.gg/api/bots/{_client.CurrentUser.Id}/stats";
+            string json = JsonSerializer.Serialize(new { server_count = serverCount });
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            request.Headers.TryAddWithoutValidation("Authorization", topGgToken);
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            using HttpResponseMessage response = await TopGgHttpClient.SendAsync(request);
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[TOP.GG] Server count updated: {serverCount}");
+                return;
+            }
+
+            string responseBody = await response.Content.ReadAsStringAsync();
+            if (responseBody.Length > 300)
+                responseBody = responseBody[..300];
+
+            Console.WriteLine($"[TOP.GG] Update failed: {(int)response.StatusCode} {response.ReasonPhrase}. {responseBody}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[TOP.GG] Server-count update failed: {ex.Message}");
         }
     }
 
