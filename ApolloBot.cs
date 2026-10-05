@@ -2148,7 +2148,7 @@ class Program
 
         var languageMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_language:{userId}:{guildId}")
-            .WithPlaceholder(T("usersettings.personal_language"))
+            .WithPlaceholder($"DM • {T("usersettings.personal_language")}")
             .WithMinValues(1)
             .WithMaxValues(1);
 
@@ -2161,14 +2161,16 @@ class Program
                 isDefault: language.Equals(personalLanguage, StringComparison.OrdinalIgnoreCase));
         }
 
-        string replyButtonLabel = $"{T("usersettings.reply_notifications")}: {(settings.ReplyNotificationsEnabled ? T("common.enabled") : T("common.disabled"))}";
-
         return new ComponentBuilder()
-            .WithSelectMenu(platformMenu, 0)
-            .WithSelectMenu(providerMenu, 1)
-            .WithSelectMenu(fixingMenu, 2)
-            .WithSelectMenu(languageMenu, 3)
-            .WithButton(replyButtonLabel, $"usersettings_toggle_replies:{userId}:{guildId}", settings.ReplyNotificationsEnabled ? ButtonStyle.Success : ButtonStyle.Secondary, row: 4)
+            .WithSelectMenu(platformMenu)
+            .WithSelectMenu(providerMenu)
+            .WithSelectMenu(fixingMenu)
+            .WithSelectMenu(languageMenu)
+            .WithButton(
+                $"{T("usersettings.reply_notifications")}: {T(settings.ReplyNotificationsEnabled ? "common.enabled" : "common.disabled")}",
+                $"usersettings_replies_toggle:{userId}:{guildId}",
+                settings.ReplyNotificationsEnabled ? ButtonStyle.Success : ButtonStyle.Secondary,
+                row: 4)
             .WithButton(T("usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary, row: 4)
             .Build();
     }
@@ -4245,7 +4247,7 @@ class Program
             }
         }
 
-        if (customId.StartsWith("usersettings_toggle_replies:", StringComparison.Ordinal))
+        if (customId.StartsWith("usersettings_replies_toggle:", StringComparison.Ordinal))
         {
             string[] parts = customId.Split(':');
             if (parts.Length != 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
@@ -4262,7 +4264,6 @@ class Program
             UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(ownerUserId);
             settings.ReplyNotificationsEnabled = !settings.ReplyNotificationsEnabled;
             SaveUserIgnoreSettings();
-
             await component.UpdateAsync(msg =>
             {
                 msg.Embed = Optional.Create(BuildUserSettingsEmbed(settings, guildId));
