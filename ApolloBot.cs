@@ -411,17 +411,8 @@ class Program
             }
 
             var embed = new EmbedBuilder()
-                .WithTitle("Hey! I'm ApolloBot 👋")
-.WithDescription(
-    "I fix embeds for:\n" +
-    "Twitter / Reddit / TikTok / Instagram\n\n" +
-    "**Use:**\n" +
-    "`!embedfix on` *(To ensure I am fixing embeds)*\n" +
-    "`!ab perms` *(To ensure I have the right permissions per channel)*\n" +
-    "`!support` *(For bug reports, help, and feedback)*\n\n" +
-    "**Optional:**\n" +
-    "`!ab help` *(For additional commands)*"
-)
+                .WithTitle(L(GetOrCreateGuildSettings(guild.Id), "welcome.title"))
+                .WithDescription(L(GetOrCreateGuildSettings(guild.Id), "welcome.description"))
                 .WithColor(Color.Red)
                 .Build();
 
@@ -454,6 +445,31 @@ class Program
         }
     }
 
+    private Dictionary<string, string> SlashDescriptionLocalizations(string key)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string language in _localization.AvailableLanguages)
+        {
+            if (language.Equals(LocalizationManager.DefaultLanguage, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string discordLocale = language.ToLowerInvariant() switch
+            {
+                "de-de" => "de",
+                "fr-fr" => "fr",
+                "en-us" => "en-US",
+                "es-es" => "es-ES",
+                "pt-br" => "pt-BR",
+                _ => language
+            };
+
+            result[discordLocale] = _localization.Get(key, language);
+        }
+        return result;
+    }
+
+    private Dictionary<string, string> SlashChoiceLocalizations(string key) => SlashDescriptionLocalizations(key);
+
     private async Task RegisterSlashCommandsAsync()
     {
         if (_client == null)
@@ -474,99 +490,102 @@ class Program
 
         var rollCommand = new SlashCommandBuilder()
             .WithName("roll")
-            .WithDescription("Roll dice for D&D or other tabletop chaos.")
+            .WithDescription(LT("en-GB", "slash.roll")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.roll"))
             .WithContextTypes(sharedCommandContexts)
             .WithIntegrationTypes(sharedIntegrationTypes)
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("dice")
-                .WithDescription("Dice formula, e.g. 1d20, 1d20+6, 2d6+3")
+                .WithDescription(LT("en-GB", "slash.option_dice")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_dice"))
                 .WithType(ApplicationCommandOptionType.String)
                 .WithRequired(false))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("mode")
-                .WithDescription("Normal, advantage, or disadvantage")
+                .WithDescription(LT("en-GB", "slash.option_mode")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_mode"))
                 .WithType(ApplicationCommandOptionType.String)
                 .WithRequired(false)
-                .AddChoice("normal", "normal")
-                .AddChoice("advantage", "advantage")
-                .AddChoice("disadvantage", "disadvantage"))
+                .AddChoice("normal", "normal", SlashChoiceLocalizations("slash.choice_normal"))
+                .AddChoice("advantage", "advantage", SlashChoiceLocalizations("slash.choice_advantage"))
+                .AddChoice("disadvantage", "disadvantage", SlashChoiceLocalizations("slash.choice_disadvantage")))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("exhaustion")
-                .WithDescription("2024 exhaustion level (0-6): -2 to the roll per level")
+                .WithDescription(LT("en-GB", "slash.option_exhaustion")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_exhaustion"))
                 .WithType(ApplicationCommandOptionType.Integer)
                 .WithRequired(false)
                 .WithMinValue(0)
                 .WithMaxValue(6))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("resistant")
-                .WithDescription("Halve the final total, rounded down")
+                .WithDescription(LT("en-GB", "slash.option_resistant")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_resistant"))
                 .WithType(ApplicationCommandOptionType.Boolean)
                 .WithRequired(false))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("vulnerable")
-                .WithDescription("Double the final total")
+                .WithDescription(LT("en-GB", "slash.option_vulnerable")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_vulnerable"))
                 .WithType(ApplicationCommandOptionType.Boolean)
                 .WithRequired(false));
 
         var fixCommand = new SlashCommandBuilder()
             .WithName("fix")
-            .WithDescription("Fix supported social embeds and repost them through ApolloBot.")
+            .WithDescription(LT("en-GB", "slash.fix")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.fix"))
             .WithContextTypes(sharedCommandContexts)
             .WithIntegrationTypes(sharedIntegrationTypes)
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("url")
-                .WithDescription("The supported link or message content to fix")
+                .WithDescription(LT("en-GB", "slash.option_url")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_url"))
                 .WithType(ApplicationCommandOptionType.String)
                 .WithRequired(true));
 
         var guildContexts = new[] { InteractionContextType.Guild };
         var guildInstall = new[] { ApplicationIntegrationType.GuildInstall };
 
-        SlashCommandBuilder SimpleGuildCommand(string name, string description) =>
-            new SlashCommandBuilder().WithName(name).WithDescription(description).WithContextTypes(guildContexts).WithIntegrationTypes(guildInstall);
+        SlashCommandBuilder SimpleGuildCommand(string name, string key) =>
+            new SlashCommandBuilder().WithName(name)
+                .WithDescription(LT("en-GB", key))
+                .WithDescriptionLocalizations(SlashDescriptionLocalizations(key))
+                .WithContextTypes(guildContexts).WithIntegrationTypes(guildInstall);
 
         // Admin commands are hidden from members who do not have Manage Server.
         // Discord applies this in the slash-command picker before the interaction reaches ApolloBot.
         SlashCommandBuilder AdminGuildCommand(string name, string description) =>
             SimpleGuildCommand(name, description).WithDefaultMemberPermissions(GuildPermission.ManageGuild);
 
-        var infoCommand = SimpleGuildCommand("info", "Show relay information for an ApolloBot message.")
-            .AddOption("message", ApplicationCommandOptionType.String, "Discord message link", isRequired: true);
-        var userStatsCommand = SimpleGuildCommand("userstats", "Show ApolloBot stats and achievements for a user.")
-            .AddOption("user", ApplicationCommandOptionType.User, "User to view", isRequired: false);
-        var embedFixCommand = AdminGuildCommand("embedfix", "Enable or disable automatic embed fixing in this server.")
-            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether embed fixing should be enabled", isRequired: true);
-        var silentCommand = AdminGuildCommand("silent", "Enable or disable silent mode in this server.")
-            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether silent mode should be enabled", isRequired: true);
-        var toggleButtonsCommand = AdminGuildCommand("togglebuttons", "Enable or disable relay buttons in this server.")
-            .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Whether relay buttons should be enabled", isRequired: true);
-        var cooldownCommand = AdminGuildCommand("cooldown", "Set the relay button cooldown for this server.")
-            .AddOption(new SlashCommandOptionBuilder().WithName("seconds").WithDescription("Cooldown from 1 to 30 seconds").WithType(ApplicationCommandOptionType.Integer).WithRequired(true).WithMinValue(1).WithMaxValue(30));
-        var whitelistCommand = AdminGuildCommand("whitelist", "Manage which channels ApolloBot can fix links in.")
-            .AddOption(new SlashCommandOptionBuilder().WithName("action").WithDescription("What to do").WithType(ApplicationCommandOptionType.String).WithRequired(true).AddChoice("add", "add").AddChoice("remove", "remove").AddChoice("list", "list").AddChoice("clear", "clear"))
-            .AddOption("channel", ApplicationCommandOptionType.Channel, "Channel to add or remove", isRequired: false);
+        var infoCommand = SimpleGuildCommand("info", "slash.info")
+            .AddOption("message", ApplicationCommandOptionType.String, LT("en-GB", "slash.option_message"), isRequired: true, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_message"));
+        var userStatsCommand = SimpleGuildCommand("userstats", "slash.userstats")
+            .AddOption("user", ApplicationCommandOptionType.User, LT("en-GB", "slash.option_user"), isRequired: false, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_user"));
+        var embedFixCommand = AdminGuildCommand("embedfix", "slash.embedfix")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, LT("en-GB", "slash.option_embed_enabled"), isRequired: true, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_embed_enabled"));
+        var silentCommand = AdminGuildCommand("silent", "slash.silent")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, LT("en-GB", "slash.option_silent_enabled"), isRequired: true, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_silent_enabled"));
+        var toggleButtonsCommand = AdminGuildCommand("togglebuttons", "slash.togglebuttons")
+            .AddOption("enabled", ApplicationCommandOptionType.Boolean, LT("en-GB", "slash.option_buttons_enabled"), isRequired: true, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_buttons_enabled"));
+        var cooldownCommand = AdminGuildCommand("cooldown", "slash.cooldown")
+            .AddOption(new SlashCommandOptionBuilder().WithName("seconds").WithDescription(LT("en-GB", "slash.option_cooldown")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_cooldown")).WithType(ApplicationCommandOptionType.Integer).WithRequired(true).WithMinValue(1).WithMaxValue(30));
+        var whitelistCommand = AdminGuildCommand("whitelist", "slash.whitelist")
+            .AddOption(new SlashCommandOptionBuilder().WithName("action").WithDescription(LT("en-GB", "slash.option_action")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_action")).WithType(ApplicationCommandOptionType.String).WithRequired(true).AddChoice("add", "add", SlashChoiceLocalizations("slash.choice_add")).AddChoice("remove", "remove", SlashChoiceLocalizations("slash.choice_remove")).AddChoice("list", "list", SlashChoiceLocalizations("slash.choice_list")).AddChoice("clear", "clear", SlashChoiceLocalizations("slash.choice_clear")))
+            .AddOption("channel", ApplicationCommandOptionType.Channel, LT("en-GB", "slash.option_channel"), isRequired: false, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_channel"));
 
         ApplicationCommandProperties[] commands = new ApplicationCommandProperties[]
         {
             rollCommand.Build(), fixCommand.Build(),
-            SimpleGuildCommand("help", "Show ApolloBot's commands and help.").Build(),
-            SimpleGuildCommand("about", "See what ApolloBot does.").Build(),
-            SimpleGuildCommand("updates", "Show ApolloBot's planned updates.").Build(),
-            SimpleGuildCommand("support", "Open ApolloBot support and feedback.").Build(),
-            SimpleGuildCommand("vote", "Get ApolloBot's voting link.").Build(),
-            SimpleGuildCommand("ping", "Check ApolloBot's gateway latency.").Build(),
-            SimpleGuildCommand("providers", "Show ApolloBot's configured embed providers.").Build(),
-            SimpleGuildCommand("fox", "Get a random fox.").Build(),
-            SimpleGuildCommand("cat", "Get a random cat.").Build(),
-            SimpleGuildCommand("dog", "Get a random dog.").Build(),
-            SimpleGuildCommand("perms", "Check ApolloBot's permissions in this channel.").Build(),
-            SimpleGuildCommand("status", "Show ApolloBot's settings for this server.").Build(),
+            SimpleGuildCommand("help", "slash.help").Build(),
+            SimpleGuildCommand("about", "slash.about").Build(),
+            SimpleGuildCommand("updates", "slash.updates").Build(),
+            SimpleGuildCommand("support", "slash.support").Build(),
+            SimpleGuildCommand("vote", "slash.vote").Build(),
+            SimpleGuildCommand("ping", "slash.ping").Build(),
+            SimpleGuildCommand("providers", "slash.providers").Build(),
+            SimpleGuildCommand("fox", "slash.fox").Build(),
+            SimpleGuildCommand("cat", "slash.cat").Build(),
+            SimpleGuildCommand("dog", "slash.dog").Build(),
+            SimpleGuildCommand("perms", "slash.perms").Build(),
+            SimpleGuildCommand("status", "slash.status").Build(),
             infoCommand.Build(), userStatsCommand.Build(),
-            SimpleGuildCommand("serverstats", "Show this server's ApolloBot stats and achievements.").Build(),
-            SimpleGuildCommand("usersettings", "Open your personal ApolloBot settings.").Build(),
-            AdminGuildCommand("setup", "Open this server's ApolloBot setup summary.").Build(),
+            SimpleGuildCommand("serverstats", "slash.serverstats").Build(),
+            SimpleGuildCommand("usersettings", "slash.usersettings").Build(),
+            AdminGuildCommand("setup", "slash.setup").Build(),
             embedFixCommand.Build(), silentCommand.Build(), toggleButtonsCommand.Build(), cooldownCommand.Build(), whitelistCommand.Build(),
-            AdminGuildCommand("reset", "Reset ApolloBot's settings for this server.").Build()
+            AdminGuildCommand("reset", "slash.reset").Build()
         };
 
         try
@@ -1805,7 +1824,7 @@ class Program
         if (!IsOptionalCommandDisabled(channel.Guild.Id, command))
             return false;
 
-        await channel.SendMessageAsync("🚫 **That command is disabled in this server.**");
+        await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "errors.command_disabled"));
         return true;
     }
 
@@ -1814,7 +1833,7 @@ class Program
         if (command.Channel is not SocketTextChannel channel || !IsOptionalCommandDisabled(channel.Guild.Id, commandName))
             return false;
 
-        await command.RespondAsync("🚫 **That command is disabled in this server.**", ephemeral: true);
+        await command.RespondAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "errors.command_disabled"), ephemeral: true);
         return true;
     }
 
@@ -1945,13 +1964,13 @@ class Program
         string[] adminCommands = { "on", "off", "silent", "togglebuttons", "cooldown", "reset", "whitelist" };
         if (!adminCommands.Contains(sub, StringComparer.OrdinalIgnoreCase))
         {
-            await textChannel.SendMessageAsync("❓ **Unrecognized command.** Use `!ab help` to see available commands.");
+            await textChannel.SendMessageAsync(L(settings, "errors.unrecognized_prefix"));
             return;
         }
 
         if (message.Author is not SocketGuildUser guildUser || !guildUser.GuildPermissions.ManageGuild)
         {
-            await textChannel.SendMessageAsync("🔒 You need **Manage Server** to use that command.");
+            await textChannel.SendMessageAsync(L(settings, "errors.manage_server"));
             return;
         }
 
@@ -1959,7 +1978,7 @@ class Program
         {
             settings.Enabled = true;
             SaveGuildSettings();
-            await textChannel.SendMessageAsync("Embed fixer is now **enabled** for this server.");
+            await textChannel.SendMessageAsync(L(settings, "admin.embed_enabled"));
             return;
         }
 
@@ -1967,7 +1986,7 @@ class Program
         {
             settings.Enabled = false;
             SaveGuildSettings();
-            await textChannel.SendMessageAsync("Embed fixer is now **disabled** for this server.");
+            await textChannel.SendMessageAsync(L(settings, "admin.embed_disabled"));
             return;
         }
 
@@ -1975,7 +1994,7 @@ class Program
         {
             if (parts.Length < 2)
             {
-                await textChannel.SendMessageAsync("Usage: `!ab silent on` or `!ab silent off`");
+                await textChannel.SendMessageAsync(L(settings, "admin.silent_usage"));
                 return;
             }
 
@@ -1985,7 +2004,7 @@ class Program
             {
                 settings.SilentMode = true;
                 SaveGuildSettings();
-                await textChannel.SendMessageAsync("Silent mode is now **enabled** for this server.");
+                await textChannel.SendMessageAsync(L(settings, "admin.silent_enabled"));
                 return;
             }
 
@@ -1993,11 +2012,11 @@ class Program
             {
                 settings.SilentMode = false;
                 SaveGuildSettings();
-                await textChannel.SendMessageAsync("Silent mode is now **disabled** for this server.");
+                await textChannel.SendMessageAsync(L(settings, "admin.silent_disabled"));
                 return;
             }
 
-            await textChannel.SendMessageAsync("Usage: `!ab silent on` or `!ab silent off`");
+            await textChannel.SendMessageAsync(L(settings, "admin.silent_usage"));
             return;
         }
 
@@ -2025,7 +2044,7 @@ class Program
             return;
         }
 
-        await textChannel.SendMessageAsync("❓ **Unrecognized command.** Use `!ab help` to see available commands.");
+        await textChannel.SendMessageAsync(L(settings, "errors.unrecognized_prefix"));
     }
 
     private async Task SendUserSettingsAsync(SocketTextChannel channel, ulong userId, ulong guildId)
@@ -2038,44 +2057,49 @@ class Program
 
     private Embed BuildUserSettingsEmbed(UserIgnoreSettings settings, ulong guildId)
     {
-        GuildSettings guildSettings = GetOrCreateGuildSettings(guildId);
-        bool ignoredHere = settings.IgnoredGuildIds.Contains(guildId);
+        GuildSettings? guildSettings = guildId != 0 ? GetOrCreateGuildSettings(guildId) : null;
+        string T(string key, params object?[] args) =>
+            guildSettings != null ? T(key, args) : LU(settings, key, args);
+
+        bool ignoredHere = guildId != 0 && settings.IgnoredGuildIds.Contains(guildId);
         string fixing = settings.IgnoreAllServers
-            ? L(guildSettings, "usersettings.disabled_everywhere")
+            ? T("usersettings.disabled_everywhere")
             : ignoredHere
-                ? L(guildSettings, "usersettings.disabled_server")
-                : L(guildSettings, "common.enabled");
+                ? T("usersettings.disabled_server")
+                : T("common.enabled");
 
         string providerSummary = string.Join("\n", _providers.Keys.OrderBy(FormatPlatformName).Select(platform =>
         {
             string value = settings.PreferredProviders.TryGetValue(platform, out string? preferred)
                 ? preferred
-                : L(guildSettings, "usersettings.automatic");
+                : T("usersettings.automatic");
             return $"**{FormatPlatformName(platform)}:** {value}";
         }));
 
         return new EmbedBuilder()
-            .WithTitle(L(guildSettings, "usersettings.title"))
-            .WithDescription(L(guildSettings, "usersettings.description"))
-            .AddField(L(guildSettings, "usersettings.embed_fixing"), fixing, false)
-            .AddField(L(guildSettings, "usersettings.preferred_providers"), providerSummary, false)
-            .AddField(L(guildSettings, "usersettings.reply_notifications"),
-                L(guildSettings, settings.ReplyNotificationsEnabled ? "common.enabled" : "common.disabled"), true)
-            .WithFooter(L(guildSettings, "usersettings.footer"))
+            .WithTitle(T("usersettings.title"))
+            .WithDescription(T("usersettings.description"))
+            .AddField(T("usersettings.embed_fixing"), fixing, false)
+            .AddField(T("usersettings.preferred_providers"), providerSummary, false)
+            .AddField(T("usersettings.reply_notifications"),
+                T(settings.ReplyNotificationsEnabled ? "common.enabled" : "common.disabled"), true)
+            .WithFooter(T("usersettings.footer"))
             .WithColor(Color.Teal)
             .Build();
     }
 
     private MessageComponent BuildUserSettingsComponents(UserIgnoreSettings settings, ulong userId, ulong guildId, string selectedPlatform)
     {
-        GuildSettings guildSettings = GetOrCreateGuildSettings(guildId);
+        GuildSettings? guildSettings = guildId != 0 ? GetOrCreateGuildSettings(guildId) : null;
+        string T(string key, params object?[] args) =>
+            guildSettings != null ? T(key, args) : LU(settings, key, args);
 
         if (!_providers.ContainsKey(selectedPlatform))
             selectedPlatform = _providers.Keys.FirstOrDefault() ?? "twitter";
 
         var platformMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_platform:{userId}:{guildId}")
-            .WithPlaceholder(L(guildSettings, "usersettings.choose_platform"))
+            .WithPlaceholder(T("usersettings.choose_platform"))
             .WithMinValues(1)
             .WithMaxValues(1);
 
@@ -2084,11 +2108,11 @@ class Program
 
         var providerMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_provider:{userId}:{guildId}:{selectedPlatform}")
-            .WithPlaceholder(L(guildSettings, "usersettings.preferred_provider_placeholder", FormatPlatformName(selectedPlatform)))
+            .WithPlaceholder(T("usersettings.preferred_provider_placeholder", FormatPlatformName(selectedPlatform)))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption(L(guildSettings, "usersettings.automatic"), "__auto__",
-                L(guildSettings, "usersettings.automatic_description"),
+            .AddOption(T("usersettings.automatic"), "__auto__",
+                T("usersettings.automatic_description"),
                 isDefault: !settings.PreferredProviders.ContainsKey(selectedPlatform));
 
         if (_providers.TryGetValue(selectedPlatform, out List<string>? providers))
@@ -2103,37 +2127,53 @@ class Program
 
         var fixingMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_fixing:{userId}:{guildId}")
-            .WithPlaceholder(L(guildSettings, "usersettings.fixing_placeholder"))
+            .WithPlaceholder(T("usersettings.fixing_placeholder"))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption(L(guildSettings, "common.enabled"), "enabled",
-                L(guildSettings, "usersettings.fix_normally"),
+            .AddOption(T("common.enabled"), "enabled",
+                T("usersettings.fix_normally"),
                 isDefault: !settings.IgnoreAllServers && !settings.IgnoredGuildIds.Contains(guildId))
-            .AddOption(L(guildSettings, "usersettings.disabled_server"), "server",
-                L(guildSettings, "usersettings.disable_server_description"),
+            .AddOption(T("usersettings.disabled_server"), "server",
+                T("usersettings.disable_server_description"),
                 isDefault: !settings.IgnoreAllServers && settings.IgnoredGuildIds.Contains(guildId))
-            .AddOption(L(guildSettings, "usersettings.disabled_everywhere"), "global",
-                L(guildSettings, "usersettings.disable_global_description"),
+            .AddOption(T("usersettings.disabled_everywhere"), "global",
+                T("usersettings.disable_global_description"),
                 isDefault: settings.IgnoreAllServers);
 
         var replyMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_replies:{userId}:{guildId}")
-            .WithPlaceholder(L(guildSettings, "usersettings.reply_notifications"))
+            .WithPlaceholder(T("usersettings.reply_notifications"))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption(L(guildSettings, "usersettings.replies_on"), "on",
-                L(guildSettings, "usersettings.replies_on_description"),
+            .AddOption(T("usersettings.replies_on"), "on",
+                T("usersettings.replies_on_description"),
                 isDefault: settings.ReplyNotificationsEnabled)
-            .AddOption(L(guildSettings, "usersettings.replies_off"), "off",
-                L(guildSettings, "usersettings.replies_off_description"),
+            .AddOption(T("usersettings.replies_off"), "off",
+                T("usersettings.replies_off_description"),
                 isDefault: !settings.ReplyNotificationsEnabled);
+
+        var languageMenu = new SelectMenuBuilder()
+            .WithCustomId($"usersettings_language:{userId}:{guildId}")
+            .WithPlaceholder(T("usersettings.personal_language"))
+            .WithMinValues(1)
+            .WithMaxValues(1);
+
+        string personalLanguage = _localization.NormalizeLanguage(settings.LanguageCode);
+        foreach (string language in _localization.AvailableLanguages.OrderBy(x => x))
+        {
+            languageMenu.AddOption(
+                GetLanguageDisplayName(language),
+                language,
+                isDefault: language.Equals(personalLanguage, StringComparison.OrdinalIgnoreCase));
+        }
 
         return new ComponentBuilder()
             .WithSelectMenu(platformMenu)
             .WithSelectMenu(providerMenu)
             .WithSelectMenu(fixingMenu)
             .WithSelectMenu(replyMenu)
-            .WithButton(L(guildSettings, "usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
+            .WithSelectMenu(languageMenu)
+            .WithButton(T("usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
 
@@ -2147,7 +2187,7 @@ class Program
                 component.User is not SocketGuildUser setupUser ||
                 !setupUser.GuildPermissions.ManageGuild)
             {
-                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.manage_server_change"), ephemeral: true);
                 return;
             }
 
@@ -2156,14 +2196,14 @@ class Program
                 !ulong.TryParse(setupParts[1], out ulong setupGuildId) ||
                 setupGuildId != setupChannel.Guild.Id)
             {
-                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.setup_expired"), ephemeral: true);
                 return;
             }
 
             string? selectedLanguage = component.Data.Values.FirstOrDefault();
             if (string.IsNullOrWhiteSpace(selectedLanguage) || !_localization.IsSupported(selectedLanguage))
             {
-                await component.RespondAsync("That language is not currently available.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.language_unavailable"), ephemeral: true);
                 return;
             }
 
@@ -2183,13 +2223,13 @@ class Program
         {
             if (component.Channel is not SocketTextChannel setupChannel || component.User is not SocketGuildUser setupUser || !setupUser.GuildPermissions.ManageGuild)
             {
-                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.manage_server_change"), ephemeral: true);
                 return;
             }
             string[] setupParts = customId.Split(':');
             if (setupParts.Length != 2 || !ulong.TryParse(setupParts[1], out ulong setupGuildId) || setupGuildId != setupChannel.Guild.Id)
             {
-                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.setup_expired"), ephemeral: true);
                 return;
             }
             GuildSettings guildSettings = GetOrCreateGuildSettings(setupGuildId);
@@ -2212,13 +2252,13 @@ class Program
         string[] parts = customId.Split(':');
         if (parts.Length < 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
         {
-            await component.RespondAsync("That settings menu is no longer valid.", ephemeral: true);
+            await component.RespondAsync(LC(component, "errors.settings_expired"), ephemeral: true);
             return;
         }
 
         if (component.User.Id != ownerUserId)
         {
-            await component.RespondAsync("These settings belong to the person who opened the menu. Use `/usersettings` to open your own.", ephemeral: true);
+            await component.RespondAsync(LC(component, "errors.settings_owner"), ephemeral: true);
             return;
         }
 
@@ -2239,6 +2279,17 @@ class Program
                 settings.PreferredProviders[selectedPlatform] = value;
             SaveUserIgnoreSettings();
         }
+        else if (customId.StartsWith("usersettings_language:", StringComparison.Ordinal))
+        {
+            if (!_localization.IsSupported(value))
+            {
+                await component.RespondAsync(LC(component, "errors.language_unavailable"), ephemeral: true);
+                return;
+            }
+
+            settings.LanguageCode = _localization.NormalizeLanguage(value);
+            SaveUserIgnoreSettings();
+        }
         else if (customId.StartsWith("usersettings_fixing:", StringComparison.Ordinal))
         {
             if (value == "global")
@@ -2248,13 +2299,16 @@ class Program
             else
             {
                 settings.IgnoreAllServers = false;
-                if (value == "server")
+                if (guildId != 0)
                 {
-                    if (!settings.IgnoredGuildIds.Contains(guildId)) settings.IgnoredGuildIds.Add(guildId);
-                }
-                else
-                {
-                    settings.IgnoredGuildIds.Remove(guildId);
+                    if (value == "server")
+                    {
+                        if (!settings.IgnoredGuildIds.Contains(guildId)) settings.IgnoredGuildIds.Add(guildId);
+                    }
+                    else
+                    {
+                        settings.IgnoredGuildIds.Remove(guildId);
+                    }
                 }
             }
             SaveUserIgnoreSettings();
@@ -2304,7 +2358,7 @@ class Program
                 ignoreSettings.IgnoredGuildIds.Add(guildId);
 
             SaveUserIgnoreSettings();
-            await textChannel.SendMessageAsync("✅ ApolloBot will now **ignore your embeds in this server**.");
+            await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "ignore.server_on"));
             return;
         }
 
@@ -2338,7 +2392,7 @@ class Program
                 {
                     ignoreSettings.IgnoreAllServers = true;
                     SaveUserIgnoreSettings();
-                    await textChannel.SendMessageAsync("✅ ApolloBot will now **ignore your embeds in all servers**.");
+                    await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "ignore.all_on"));
                     return;
                 }
 
@@ -2346,11 +2400,11 @@ class Program
                 {
                     ignoreSettings.IgnoreAllServers = false;
                     SaveUserIgnoreSettings();
-                    await textChannel.SendMessageAsync("✅ ApolloBot will no longer ignore your embeds globally.");
+                    await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "ignore.all_off"));
                     return;
                 }
 
-                await textChannel.SendMessageAsync("Usage: `!ab ignore all`, `!ab ignore all on`, or `!ab ignore all off`");
+                await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "ignore.usage"));
                 return;
             }
 
@@ -2377,111 +2431,42 @@ class Program
     {
         if (parts.Length < 2)
         {
-            string currentState = settings.ButtonsEnabled ? "enabled" : "disabled";
-            await textChannel.SendMessageAsync(
-                $"Relay buttons are currently **{currentState}** in this server. Usage: `!ab togglebuttons <on/off>`");
+            await textChannel.SendMessageAsync(L(settings, "admin.buttons_current", L(settings, settings.ButtonsEnabled ? "common.enabled" : "common.disabled")));
             return;
         }
-
         string mode = parts[1].ToLowerInvariant();
-
-        if (mode == "on")
-        {
-            settings.ButtonsEnabled = true;
-            SaveGuildSettings();
-            await textChannel.SendMessageAsync("✅ Relay buttons are now **enabled** for this server.");
-            return;
-        }
-
-        if (mode == "off")
-        {
-            settings.ButtonsEnabled = false;
-            SaveGuildSettings();
-            await textChannel.SendMessageAsync("✅ Relay buttons are now **disabled** for this server.");
-            return;
-        }
-
-        await textChannel.SendMessageAsync("Usage: `!ab togglebuttons <on/off>`");
+        if (mode == "on") { settings.ButtonsEnabled = true; SaveGuildSettings(); await textChannel.SendMessageAsync(L(settings, "admin.buttons_enabled")); return; }
+        if (mode == "off") { settings.ButtonsEnabled = false; SaveGuildSettings(); await textChannel.SendMessageAsync(L(settings, "admin.buttons_disabled")); return; }
+        await textChannel.SendMessageAsync(L(settings, "admin.buttons_usage"));
     }
 
     private async Task HandleCooldownCommand(SocketTextChannel textChannel, GuildSettings settings, string[] parts)
     {
-        if (parts.Length < 2)
-        {
-            await textChannel.SendMessageAsync(
-                $"The current relay button cooldown is **{settings.ButtonCooldownSeconds} seconds**. Usage: `!ab cooldown <1-30>`");
-            return;
-        }
-
-        if (!int.TryParse(parts[1], out int seconds) || seconds < 1 || seconds > 30)
-        {
-            await textChannel.SendMessageAsync("Cooldown must be a whole number between **1** and **30** seconds.");
-            return;
-        }
-
-        settings.ButtonCooldownSeconds = seconds;
-        SaveGuildSettings();
-        await textChannel.SendMessageAsync($"⏱️ Relay button cooldown set to **{seconds} seconds**.");
+        if (parts.Length < 2) { await textChannel.SendMessageAsync(L(settings, "admin.cooldown_current", settings.ButtonCooldownSeconds)); return; }
+        if (!int.TryParse(parts[1], out int seconds) || seconds < 1 || seconds > 30) { await textChannel.SendMessageAsync(L(settings, "admin.cooldown_invalid")); return; }
+        settings.ButtonCooldownSeconds = seconds; SaveGuildSettings();
+        await textChannel.SendMessageAsync(L(settings, "admin.cooldown_set", seconds));
     }
 
     private async Task HandleResetCommand(SocketTextChannel textChannel, GuildSettings settings, string[] parts)
     {
-        if (parts.Length < 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase))
-        {
-            await textChannel.SendMessageAsync(
-                "This will reset ApolloBot's settings for this server. Run `!ab reset confirm` to continue.");
-            return;
-        }
-
-        settings.Enabled = true;
-        settings.SilentMode = false;
-        settings.ButtonsEnabled = true;
-        settings.ButtonCooldownSeconds = 3;
-        settings.WhitelistedChannelIds.Clear();
-        settings.DisabledUserCommands ??= new List<string>();
-        settings.DisabledUserCommands.Clear();
-
-        SaveGuildSettings();
-
-        await textChannel.SendMessageAsync(
-            "✅ ApolloBot settings for this server have been reset. Embed fixing is enabled, buttons are on, cooldown is back to 3 seconds, and the whitelist was cleared.");
+        if (parts.Length < 2 || !parts[1].Equals("confirm", StringComparison.OrdinalIgnoreCase)) { await textChannel.SendMessageAsync(L(settings, "admin.reset_confirm")); return; }
+        settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3;
+        settings.WhitelistedChannelIds.Clear(); settings.DisabledUserCommands ??= new List<string>(); settings.DisabledUserCommands.Clear(); SaveGuildSettings();
+        await textChannel.SendMessageAsync(L(settings, "admin.reset_done"));
     }
 
     private async Task HandleInfoCommand(SocketTextChannel textChannel, string[] parts)
     {
-        if (parts.Length < 2)
-        {
-            await textChannel.SendMessageAsync("Usage: `!ab info <message link>`");
-            return;
-        }
-
-        if (!TryExtractMessageIdFromDiscordLink(parts[1], out ulong messageId))
-        {
-            await textChannel.SendMessageAsync("That doesn't look like a valid Discord message link.");
-            return;
-        }
-
-        if (!_relayStates.TryGetValue(messageId, out RelayMessageState? state))
-        {
-            await textChannel.SendMessageAsync("I couldn't find embed info for that message. It may not be one of ApolloBot's relays or the state may have been lost after a restart.");
-            return;
-        }
-
-        string platformText = state.Platforms.Count == 0
-            ? "Unknown"
-            : string.Join(", ", state.Platforms.Select(FormatPlatformName));
-
-        string providerText = FormatRelayProviders(state);
-        string userText = $"<@{state.OriginalAuthorId}>";
-
-        var embed = new EmbedBuilder()
-            .WithTitle("Embed Info")
-            .WithColor(Color.Teal)
-            .AddField("Original User", userText, true)
-            .AddField("Platform(s)", platformText, true)
-            .AddField("Provider(s)", providerText, false)
-            .Build();
-
+        GuildSettings settings = GetOrCreateGuildSettings(textChannel.Guild.Id);
+        if (parts.Length < 2) { await textChannel.SendMessageAsync(L(settings, "info.usage")); return; }
+        if (!TryExtractMessageIdFromDiscordLink(parts[1], out ulong messageId)) { await textChannel.SendMessageAsync(L(settings, "info.invalid_link")); return; }
+        if (!_relayStates.TryGetValue(messageId, out RelayMessageState? state)) { await textChannel.SendMessageAsync(L(settings, "info.not_found")); return; }
+        string platformText = state.Platforms.Count == 0 ? L(settings, "common.unknown") : string.Join(", ", state.Platforms.Select(FormatPlatformName));
+        string providerText = FormatRelayProviders(state); string userText = $"<@{state.OriginalAuthorId}>";
+        var embed = new EmbedBuilder().WithTitle(L(settings, "info.title")).WithColor(Color.Teal)
+            .AddField(L(settings, "info.original_user"), userText, true).AddField(L(settings, "info.platforms"), platformText, true)
+            .AddField(L(settings, "info.providers"), providerText, false).Build();
         await textChannel.SendMessageAsync(embed: embed);
     }
 
@@ -2498,7 +2483,7 @@ class Program
                 ulong.TryParse(mentionMatch.Groups[1].Value, out targetUserId);
             else if (!ulong.TryParse(rawTarget, out targetUserId))
             {
-                await channel.SendMessageAsync("Usage: `!ab userstats [@user|userID]`");
+                await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "stats.userstats_usage"));
                 return;
             }
         }
@@ -2507,60 +2492,58 @@ class Program
         string displayName = targetUser?.GlobalName ?? targetUser?.Username ?? $"User {targetUserId}";
         string avatarUrl = targetUser?.GetAvatarUrl(ImageFormat.Auto, 256) ?? targetUser?.GetDefaultAvatarUrl() ?? "";
 
-        Embed embed = BuildUserStatsEmbed(targetUserId, displayName, avatarUrl);
-        MessageComponent components = BuildStatsProfileComponents("user", targetUserId, message.Author.Id);
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        Embed embed = BuildUserStatsEmbed(targetUserId, displayName, avatarUrl, settings);
+        MessageComponent components = BuildStatsProfileComponents("user", targetUserId, message.Author.Id, settings);
 
         await channel.SendMessageAsync(embed: embed, components: components);
     }
 
     private async Task SendPublicServerStatsAsync(SocketUserMessage message, SocketTextChannel channel)
     {
-        Embed embed = BuildServerStatsEmbed(channel.Guild);
-        MessageComponent components = BuildStatsProfileComponents("server", channel.Guild.Id, message.Author.Id);
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        Embed embed = BuildServerStatsEmbed(channel.Guild, settings);
+        MessageComponent components = BuildStatsProfileComponents("server", channel.Guild.Id, message.Author.Id, settings);
 
         await channel.SendMessageAsync(embed: embed, components: components);
     }
 
-    private Embed BuildUserStatsEmbed(ulong userId, string displayName, string avatarUrl)
+    private Embed BuildUserStatsEmbed(ulong userId, string displayName, string avatarUrl, GuildSettings settings)
     {
         _userUsageStats.TryGetValue(userId, out UserUsageStats? stats);
 
         long totalFixes = stats?.EmbedFixCount ?? 0;
         int serverCount = stats?.GuildIds?.Count ?? 0;
-        List<string> achievements = GetUserAchievements(userId, stats);
-        int regularUnlocked = GetUserRegularAchievementCount(userId, stats);
+        List<string> achievements = GetUserAchievements(userId, stats, settings);
+        int regularUnlocked = GetUserRegularAchievementCount(userId, stats, settings);
         const int regularTotal = 10;
 
         string discordSince = SnowflakeUtils.FromSnowflake(userId).UtcDateTime.ToString("dd MMM yyyy");
         string firstUse = stats?.FirstUsedAtUtc != default
             ? stats!.FirstUsedAtUtc.ToString("dd MMM yyyy")
-            : "Not recorded yet";
+            : L(settings, "stats.not_recorded");
 
         string favouritePlatform = GetFavouritePlatform(stats?.PlatformUsage);
-        string activity = FormatPlatformActivity(stats?.PlatformUsage);
+        string activity = FormatPlatformActivity(stats?.PlatformUsage, settings);
 
         var embed = new EmbedBuilder()
-            .WithTitle($"🛰️ ApolloBot User Profile — {displayName}")
-            .WithDescription($"**User ID:** `{userId}`")
-            .AddField("👤 User Information",
-                $"**Discord Since:** {discordSince}\n" +
-                $"**First Apollo Use:** {firstUse}\n" +
-                $"**Servers Used:** {serverCount}", false)
-            .AddField("🔗 Embed Activity",
-                $"**Total Fixes:** {totalFixes}\n{activity}", false)
-            .AddField("📊 Activity",
-                $"**Favourite Platform:** {favouritePlatform}\n" +
-                $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
-            .AddField("🏆 Achievements",
-                $"**{regularUnlocked} / {regularTotal}** regular achievements unlocked\n" +
-                BuildAchievementPreview(achievements), false)
+            .WithTitle(L(settings, "stats.user_title", displayName))
+            .WithDescription(L(settings, "stats.user_id", userId))
+            .AddField(L(settings, "stats.user_information"),
+                L(settings, "stats.user_info_value", discordSince, firstUse, serverCount), false)
+            .AddField(L(settings, "stats.embed_activity"),
+                L(settings, "stats.total_fixes_activity", totalFixes, activity), false)
+            .AddField(L(settings, "stats.activity"),
+                L(settings, "stats.activity_value", favouritePlatform, FormatLastActivity(stats?.LastUsedAtUtc)), false)
+            .AddField(L(settings, "stats.achievements"),
+                L(settings, "stats.user_achievements_value", regularUnlocked, regularTotal, BuildAchievementPreview(achievements, settings)), false)
             .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
             .WithCurrentTimestamp();
 
         if (userId == ApolloBotCreatorUserId)
         {
-            embed.AddField("👑 Special Achievement",
-                "**ApolloBot Creator** — `UNIQUE`\n*The one who started it all.*\nUnobtainable.", false);
+            embed.AddField(L(settings, "stats.special_achievement"),
+                L(settings, "stats.creator_special"), false);
         }
 
         if (!string.IsNullOrWhiteSpace(avatarUrl))
@@ -2569,13 +2552,13 @@ class Program
         return embed.Build();
     }
 
-    private Embed BuildServerStatsEmbed(SocketGuild guild)
+    private Embed BuildServerStatsEmbed(SocketGuild guild, GuildSettings settings)
     {
         _guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? stats);
         _guildActivity.TryGetValue(guild.Id, out GuildActivityState? activityState);
 
         long totalFixes = stats?.EmbedFixCount ?? 0;
-        List<string> achievements = GetServerAchievements(stats);
+        List<string> achievements = GetServerAchievements(stats, settings);
         int unlocked = achievements.Count;
         const int totalAchievements = 11;
 
@@ -2584,23 +2567,19 @@ class Program
             ? activityState!.LastJoinedAtUtc.ToString("dd MMM yyyy")
             : stats?.FirstSeenAtUtc != default
                 ? stats!.FirstSeenAtUtc.ToString("dd MMM yyyy")
-                : "Unknown";
+                : L(settings, "common.unknown");
 
         var embed = new EmbedBuilder()
-            .WithTitle($"🛰️ ApolloBot Server Profile — {guild.Name}")
-            .WithDescription($"**Server ID:** `{guild.Id}`")
-            .AddField("🏠 Server Information",
-                $"**Created:** {created}\n" +
-                $"**ApolloBot Joined:** {joined}\n" +
-                $"**Members:** {guild.MemberCount}", false)
-            .AddField("🔗 Embed Activity",
-                $"**Total Fixes:** {totalFixes}\n{FormatPlatformActivity(stats?.PlatformUsage)}", false)
-            .AddField("📊 Activity",
-                $"**Favourite Platform:** {GetFavouritePlatform(stats?.PlatformUsage)}\n" +
-                $"**Last Fix:** {FormatLastActivity(stats?.LastUsedAtUtc)}", false)
-            .AddField("🏆 Achievements",
-                $"**{unlocked} / {totalAchievements}** unlocked\n" +
-                BuildAchievementPreview(achievements), false)
+            .WithTitle(L(settings, "stats.server_title", guild.Name))
+            .WithDescription(L(settings, "stats.server_id", guild.Id))
+            .AddField(L(settings, "stats.server_information"),
+                L(settings, "stats.server_info_value", created, joined, guild.MemberCount), false)
+            .AddField(L(settings, "stats.embed_activity"),
+                L(settings, "stats.total_fixes_activity", totalFixes, FormatPlatformActivity(stats?.PlatformUsage, settings)), false)
+            .AddField(L(settings, "stats.activity"),
+                L(settings, "stats.activity_value", GetFavouritePlatform(stats?.PlatformUsage), FormatLastActivity(stats?.LastUsedAtUtc)), false)
+            .AddField(L(settings, "stats.achievements"),
+                L(settings, "stats.server_achievements_value", unlocked, totalAchievements, BuildAchievementPreview(achievements, settings)), false)
             .WithColor(Color.DarkTeal)
             .WithCurrentTimestamp();
 
@@ -2611,26 +2590,26 @@ class Program
         return embed.Build();
     }
 
-    private MessageComponent BuildStatsProfileComponents(string scope, ulong entityId, ulong ownerUserId)
+    private MessageComponent BuildStatsProfileComponents(string scope, ulong entityId, ulong ownerUserId, GuildSettings settings)
     {
         return new ComponentBuilder()
-            .WithButton("View Achievements", $"stats_achievements:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("🏅"))
-            .WithButton("Close", $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
+            .WithButton(L(settings, "stats.view_achievements"), $"stats_achievements:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("🏅"))
+            .WithButton(L(settings, "stats.close"), $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
             .Build();
     }
 
-    private MessageComponent BuildAchievementComponents(string scope, ulong entityId, ulong ownerUserId)
+    private MessageComponent BuildAchievementComponents(string scope, ulong entityId, ulong ownerUserId, GuildSettings settings)
     {
         return new ComponentBuilder()
-            .WithButton("Back to Profile", $"stats_profile:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("◀️"))
-            .WithButton("Close", $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
+            .WithButton(L(settings, "stats.back_profile"), $"stats_profile:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Secondary, new Emoji("◀️"))
+            .WithButton(L(settings, "stats.close"), $"stats_close:{scope}:{entityId}:{ownerUserId}", ButtonStyle.Danger, new Emoji("✖️"))
             .Build();
     }
 
-    private string FormatPlatformActivity(Dictionary<string, long>? platformUsage)
+    private string FormatPlatformActivity(Dictionary<string, long>? platformUsage, GuildSettings settings)
     {
         if (platformUsage == null || platformUsage.Count == 0 || platformUsage.Values.Sum() <= 0)
-            return "**Platforms:** No embed activity recorded yet.";
+            return L(settings, "stats.no_platform_activity");
 
         return string.Join("\n", platformUsage
             .Where(x => x.Value > 0)
@@ -2659,38 +2638,39 @@ class Program
         return value.Value.ToString("dd MMM yyyy HH:mm 'UTC'");
     }
 
-    private string BuildAchievementPreview(List<string> achievements)
+    private string BuildAchievementPreview(List<string> achievements, GuildSettings settings)
     {
         if (achievements.Count == 0)
-            return "No regular achievements unlocked yet.";
+            return L(settings, "stats.no_regular_achievements");
 
+        string creatorPreview = L(settings, "achievements.creator_preview");
         return string.Join("\n", achievements
-            .Where(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal))
+            .Where(x => !x.Equals(creatorPreview, StringComparison.Ordinal))
             .Take(3));
     }
 
-    private int GetUserRegularAchievementCount(ulong userId, UserUsageStats? stats)
+    private int GetUserRegularAchievementCount(ulong userId, UserUsageStats? stats, GuildSettings settings)
     {
-        return GetUserAchievements(userId, stats)
-            .Count(x => !x.Contains("ApolloBot Creator", StringComparison.Ordinal));
+        int count = GetUserAchievements(userId, stats, settings).Count;
+        return userId == ApolloBotCreatorUserId ? Math.Max(0, count - 1) : count;
     }
 
-    private List<string> GetUserAchievements(ulong userId, UserUsageStats? stats)
+    private List<string> GetUserAchievements(ulong userId, UserUsageStats? stats, GuildSettings settings)
     {
         var unlocked = new List<string>();
         long fixes = stats?.EmbedFixCount ?? 0;
 
         if (userId == ApolloBotCreatorUserId)
-            unlocked.Add("👑 **ApolloBot Creator** — `UNIQUE` — The one who started it all.");
+            unlocked.Add(L(settings, "achievements.creator_preview"));
 
-        if (fixes >= 1) unlocked.Add("🔧 **First Fix!** — `COMMON`");
-        if (fixes >= 10) unlocked.Add("🛠️ **Getting the Hang of It** — `COMMON`");
-        if (fixes >= 25) unlocked.Add("🔗 **Link Regular** — `UNCOMMON`");
-        if (fixes >= 50) unlocked.Add("🩺 **Link Doctor** — `UNCOMMON`");
-        if (fixes >= 100) unlocked.Add("🚀 **Embed Fixer** — `RARE`");
-        if (fixes >= 250) unlocked.Add("📡 **Embed Enthusiast** — `EPIC`");
-        if (fixes >= 500) unlocked.Add("🌐 **Terminally Online** — `LEGENDARY`");
-        if (fixes >= 1_000) unlocked.Add("💀 **Touch Grass** — `LEGENDARY`");
+        if (fixes >= 1) unlocked.Add(L(settings, "achievements.user_first"));
+        if (fixes >= 10) unlocked.Add(L(settings, "achievements.user_hang"));
+        if (fixes >= 25) unlocked.Add(L(settings, "achievements.user_regular"));
+        if (fixes >= 50) unlocked.Add(L(settings, "achievements.user_doctor"));
+        if (fixes >= 100) unlocked.Add(L(settings, "achievements.user_fixer"));
+        if (fixes >= 250) unlocked.Add(L(settings, "achievements.user_enthusiast"));
+        if (fixes >= 500) unlocked.Add(L(settings, "achievements.user_online"));
+        if (fixes >= 1_000) unlocked.Add(L(settings, "achievements.user_grass"));
 
         HashSet<string> platforms = stats?.PlatformUsage?
             .Where(x => x.Value > 0)
@@ -2698,133 +2678,120 @@ class Program
             .ToHashSet() ?? new HashSet<string>();
 
         if (platforms.Contains("twitter") && platforms.Contains("tiktok") && platforms.Contains("instagram"))
-            unlocked.Add("🎩 **Hat Trick** — `RARE`");
+            unlocked.Add(L(settings, "achievements.user_hat"));
 
         if ((stats?.GuildIds?.Count ?? 0) >= 5)
-            unlocked.Add("🌍 **Around the World** — `EPIC`");
+            unlocked.Add(L(settings, "achievements.user_world"));
 
         return unlocked;
     }
 
-    private List<string> GetServerAchievements(GuildUsageStats? stats)
+    private List<string> GetServerAchievements(GuildUsageStats? stats, GuildSettings settings)
     {
         var unlocked = new List<string>();
         long fixes = stats?.EmbedFixCount ?? 0;
 
-        unlocked.Add("👋 **Welcome to ApolloBot!** — `COMMON`");
-        if (fixes >= 25) unlocked.Add("🔧 **Getting Started** — `COMMON`");
-        if (fixes >= 100) unlocked.Add("🔗 **Link Fixers** — `COMMON`");
-        if (fixes >= 250) unlocked.Add("🛠️ **Regular Customers** — `UNCOMMON`");
-        if (fixes >= 500) unlocked.Add("⭐ **ApolloBot Approved** — `UNCOMMON`");
-        if (fixes >= 1_000) unlocked.Add("🏭 **Link Factory** — `RARE`");
-        if (fixes >= 2_000) unlocked.Add("⚙️ **Industrial Scale** — `EPIC`");
-        if (fixes >= 2_500) unlocked.Add("🤨 **Seriously?** — `EPIC`");
-        if (fixes >= 5_000) unlocked.Add("🌱 **Touch Grass, Collectively** — `LEGENDARY`");
-        if (fixes >= 10_000) unlocked.Add("💀 **What Have You Done?** — `LEGENDARY`");
+        unlocked.Add(L(settings, "achievements.server_welcome"));
+        if (fixes >= 25) unlocked.Add(L(settings, "achievements.server_started"));
+        if (fixes >= 100) unlocked.Add(L(settings, "achievements.server_fixers"));
+        if (fixes >= 250) unlocked.Add(L(settings, "achievements.server_customers"));
+        if (fixes >= 500) unlocked.Add(L(settings, "achievements.server_approved"));
+        if (fixes >= 1_000) unlocked.Add(L(settings, "achievements.server_factory"));
+        if (fixes >= 2_000) unlocked.Add(L(settings, "achievements.server_industrial"));
+        if (fixes >= 2_500) unlocked.Add(L(settings, "achievements.server_seriously"));
+        if (fixes >= 5_000) unlocked.Add(L(settings, "achievements.server_grass"));
+        if (fixes >= 10_000) unlocked.Add(L(settings, "achievements.server_done"));
 
         Dictionary<string, long>? platforms = stats?.PlatformUsage;
         if (platforms != null && new[] { "twitter", "tiktok", "instagram" }.All(p => platforms.TryGetValue(p, out long count) && count >= 100))
-            unlocked.Add("📡 **Multimedia Empire** — `EPIC`");
+            unlocked.Add(L(settings, "achievements.server_multimedia"));
 
         return unlocked;
     }
 
-    private Embed BuildUserAchievementsEmbed(ulong userId, string displayName)
+    private string Rarity(GuildSettings settings, string rarity) => L(settings, $"achievements.rarity_{rarity.ToLowerInvariant()}");
+
+    private string FormatAchievementEntry(GuildSettings settings, string emoji, string nameKey, string rarity, string descriptionKey, long current, long target)
     {
-        _userUsageStats.TryGetValue(userId, out UserUsageStats? stats);
-        List<string> unlocked = GetUserAchievements(userId, stats);
-        long fixes = stats?.EmbedFixCount ?? 0;
-        int servers = stats?.GuildIds?.Count ?? 0;
+        string name = L(settings, nameKey);
+        string description = L(settings, descriptionKey, target);
+        string rarityText = Rarity(settings, rarity);
 
-        var lines = new List<string>();
-
-        if (userId == ApolloBotCreatorUserId)
-            lines.Add("👑 **ApolloBot Creator** `UNIQUE`\n*The one who started it all.*\n✓ Special • Unobtainable");
-
-        lines.Add(FormatAchievementEntry("🔧", "First Fix!", "COMMON", "Complete your first embed fix.", fixes, 1));
-        lines.Add(FormatAchievementEntry("🛠️", "Getting the Hang of It", "COMMON", "Complete 10 embed fixes.", fixes, 10));
-        lines.Add(FormatAchievementEntry("🔗", "Link Regular", "UNCOMMON", "Complete 25 embed fixes.", fixes, 25));
-        lines.Add(FormatAchievementEntry("🩺", "Link Doctor", "UNCOMMON", "Complete 50 embed fixes.", fixes, 50));
-        lines.Add(FormatAchievementEntry("🚀", "Embed Fixer", "RARE", "Complete 100 embed fixes.", fixes, 100));
-        lines.Add(FormatAchievementEntry("📡", "Embed Enthusiast", "EPIC", "Complete 250 embed fixes.", fixes, 250));
-        lines.Add(FormatAchievementEntry("🌐", "Terminally Online", "LEGENDARY", "Complete 500 embed fixes.", fixes, 500));
-        lines.Add(FormatAchievementEntry("💀", "Touch Grass", "LEGENDARY", "Complete 1,000 embed fixes.", fixes, 1_000));
-
-        bool hatTrick = new[] { "twitter", "tiktok", "instagram" }.All(p =>
-            stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count > 0);
-        lines.Add(hatTrick
-            ? "🎩 **Hat Trick** `RARE`\nFix at least one Twitter/X, TikTok and Instagram link.\n✓ Unlocked"
-            : "🔒 **Hat Trick** `RARE`\nFix at least one Twitter/X, TikTok and Instagram link.");
-
-        lines.Add(FormatAchievementEntry("🌍", "Around the World", "EPIC", "Use ApolloBot in 5 different servers.", servers, 5));
-
-        return new EmbedBuilder()
-            .WithTitle($"🏆 {displayName} — Achievements")
-            .WithDescription(string.Join("\n\n", lines))
-            .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
-            .WithFooter($"{GetUserRegularAchievementCount(userId, stats)} / 10 regular achievements unlocked")
-            .Build();
-    }
-
-    private Embed BuildServerAchievementsEmbed(SocketGuild guild)
-    {
-        _guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? stats);
-        long fixes = stats?.EmbedFixCount ?? 0;
-
-        var lines = new List<string>
-        {
-            "👋 **Welcome to Apollo!** `COMMON`\nApolloBot joined the server.\n✓ Unlocked",
-            FormatAchievementEntry("🔧", "Getting Started", "COMMON", "Complete 25 embed fixes.", fixes, 25),
-            FormatAchievementEntry("🔗", "Link Fixers", "COMMON", "Complete 100 embed fixes.", fixes, 100),
-            FormatAchievementEntry("🛠️", "Regular Customers", "UNCOMMON", "Complete 250 embed fixes.", fixes, 250),
-            FormatAchievementEntry("⭐", "ApolloBot Approved", "UNCOMMON", "Complete 500 embed fixes.", fixes, 500),
-            FormatAchievementEntry("🏭", "Link Factory", "RARE", "Complete 1,000 embed fixes.", fixes, 1_000),
-            FormatAchievementEntry("⚙️", "Industrial Scale", "EPIC", "Complete 2,000 embed fixes.", fixes, 2_000),
-            FormatAchievementEntry("🤨", "Seriously?", "EPIC", "Complete 2,500 embed fixes.", fixes, 2_500),
-            FormatAchievementEntry("🌱", "Touch Grass, Collectively", "LEGENDARY", "Complete 5,000 embed fixes.", fixes, 5_000),
-            FormatAchievementEntry("💀", "What Have You Done?", "LEGENDARY", "Complete 10,000 embed fixes.", fixes, 10_000)
-        };
-
-        bool multimedia = new[] { "twitter", "tiktok", "instagram" }.All(p =>
-            stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count >= 100);
-
-        lines.Add(multimedia
-            ? "📡 **Multimedia Empire** `EPIC`\nComplete 100 fixes each on Twitter/X, TikTok and Instagram.\n✓ Unlocked"
-            : "🔒 **Multimedia Empire** `EPIC`\nComplete 100 fixes each on Twitter/X, TikTok and Instagram.");
-
-        return new EmbedBuilder()
-            .WithTitle($"🏆 {guild.Name} — Achievements")
-            .WithDescription(string.Join("\n\n", lines))
-            .WithColor(Color.DarkTeal)
-            .WithFooter($"{GetServerAchievements(stats).Count} / 11 achievements unlocked")
-            .Build();
-    }
-
-    private string FormatAchievementEntry(string emoji, string name, string rarity, string description, long current, long target)
-    {
         if (current >= target)
-            return $"{emoji} **{name}** `{rarity}`\n{description}\n✓ Unlocked";
+            return $"{emoji} **{name}** `{rarityText}`\n{description}\n{L(settings, "achievements.unlocked")}";
 
         double percent = target <= 0 ? 0 : Math.Clamp(current / (double)target, 0, 1);
         int filled = percent > 0 ? Math.Max(1, (int)Math.Floor(percent * 10)) : 0;
         string bar = new string('█', filled) + new string('░', 10 - filled);
         int percentDisplay = (int)Math.Floor(percent * 100);
+        return $"🔒 **{name}** `{rarityText}`\n{description}\n`{bar}` **{percentDisplay}%**  ({current:N0} / {target:N0})";
+    }
 
-        return $"🔒 **{name}** `{rarity}`\n{description}\n`{bar}` **{percentDisplay}%**  ({current:N0} / {target:N0})";
+    private Embed BuildUserAchievementsEmbed(ulong userId, string displayName, GuildSettings settings)
+    {
+        _userUsageStats.TryGetValue(userId, out UserUsageStats? stats);
+        long fixes = stats?.EmbedFixCount ?? 0;
+        int servers = stats?.GuildIds?.Count ?? 0;
+        var lines = new List<string>();
+
+        if (userId == ApolloBotCreatorUserId)
+            lines.Add($"👑 **{L(settings, "achievements.creator_name")}** `{Rarity(settings, "unique")}`\n*{L(settings, "achievements.creator_description")}*\n{L(settings, "achievements.special_unobtainable")}");
+
+        lines.Add(FormatAchievementEntry(settings, "🔧", "achievements.user_first_name", "common", "achievements.user_first_desc", fixes, 1));
+        lines.Add(FormatAchievementEntry(settings, "🛠️", "achievements.user_hang_name", "common", "achievements.user_hang_desc", fixes, 10));
+        lines.Add(FormatAchievementEntry(settings, "🔗", "achievements.user_regular_name", "uncommon", "achievements.user_regular_desc", fixes, 25));
+        lines.Add(FormatAchievementEntry(settings, "🩺", "achievements.user_doctor_name", "uncommon", "achievements.user_doctor_desc", fixes, 50));
+        lines.Add(FormatAchievementEntry(settings, "🚀", "achievements.user_fixer_name", "rare", "achievements.user_fixer_desc", fixes, 100));
+        lines.Add(FormatAchievementEntry(settings, "📡", "achievements.user_enthusiast_name", "epic", "achievements.user_enthusiast_desc", fixes, 250));
+        lines.Add(FormatAchievementEntry(settings, "🌐", "achievements.user_online_name", "legendary", "achievements.user_online_desc", fixes, 500));
+        lines.Add(FormatAchievementEntry(settings, "💀", "achievements.user_grass_name", "legendary", "achievements.user_grass_desc", fixes, 1000));
+
+        bool hatTrick = new[] { "twitter", "tiktok", "instagram" }.All(p => stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count > 0);
+        string hat = $"🎩 **{L(settings, "achievements.user_hat_name")}** `{Rarity(settings, "rare")}`\n{L(settings, "achievements.user_hat_desc")}";
+        lines.Add(hatTrick ? hat + "\n" + L(settings, "achievements.unlocked") : "🔒" + hat[1..]);
+        lines.Add(FormatAchievementEntry(settings, "🌍", "achievements.user_world_name", "epic", "achievements.user_world_desc", servers, 5));
+
+        return new EmbedBuilder().WithTitle(L(settings, "achievements.user_title", displayName)).WithDescription(string.Join("\n\n", lines))
+            .WithColor(userId == ApolloBotCreatorUserId ? Color.Gold : Color.Teal)
+            .WithFooter(L(settings, "achievements.user_footer", GetUserRegularAchievementCount(userId, stats, settings), 10)).Build();
+    }
+
+    private Embed BuildServerAchievementsEmbed(SocketGuild guild, GuildSettings settings)
+    {
+        _guildUsageStats.TryGetValue(guild.Id, out GuildUsageStats? stats);
+        long fixes = stats?.EmbedFixCount ?? 0;
+        var lines = new List<string>
+        {
+            $"👋 **{L(settings, "achievements.server_welcome_name")}** `{Rarity(settings, "common")}`\n{L(settings, "achievements.server_welcome_desc")}\n{L(settings, "achievements.unlocked")}",
+            FormatAchievementEntry(settings, "🔧", "achievements.server_started_name", "common", "achievements.server_started_desc", fixes, 25),
+            FormatAchievementEntry(settings, "🔗", "achievements.server_fixers_name", "common", "achievements.server_fixers_desc", fixes, 100),
+            FormatAchievementEntry(settings, "🛠️", "achievements.server_customers_name", "uncommon", "achievements.server_customers_desc", fixes, 250),
+            FormatAchievementEntry(settings, "⭐", "achievements.server_approved_name", "uncommon", "achievements.server_approved_desc", fixes, 500),
+            FormatAchievementEntry(settings, "🏭", "achievements.server_factory_name", "rare", "achievements.server_factory_desc", fixes, 1000),
+            FormatAchievementEntry(settings, "⚙️", "achievements.server_industrial_name", "epic", "achievements.server_industrial_desc", fixes, 2000),
+            FormatAchievementEntry(settings, "🤨", "achievements.server_seriously_name", "epic", "achievements.server_seriously_desc", fixes, 2500),
+            FormatAchievementEntry(settings, "🌱", "achievements.server_grass_name", "legendary", "achievements.server_grass_desc", fixes, 5000),
+            FormatAchievementEntry(settings, "💀", "achievements.server_done_name", "legendary", "achievements.server_done_desc", fixes, 10000)
+        };
+        bool multimedia = new[] { "twitter", "tiktok", "instagram" }.All(p => stats?.PlatformUsage?.TryGetValue(p, out long count) == true && count >= 100);
+        string multi = $"📡 **{L(settings, "achievements.server_multimedia_name")}** `{Rarity(settings, "epic")}`\n{L(settings, "achievements.server_multimedia_desc")}";
+        lines.Add(multimedia ? multi + "\n" + L(settings, "achievements.unlocked") : "🔒" + multi[1..]);
+        return new EmbedBuilder().WithTitle(L(settings, "achievements.server_title", guild.Name)).WithDescription(string.Join("\n\n", lines))
+            .WithColor(Color.DarkTeal).WithFooter(L(settings, "achievements.server_footer", GetServerAchievements(stats, settings).Count, 11)).Build();
     }
 
     private async Task SendGuildUsageBreakdownAsync(SocketTextChannel textChannel)
     {
         if (!_guildUsageStats.TryGetValue(textChannel.Guild.Id, out GuildUsageStats? stats) || stats.PlatformUsage.Count == 0)
         {
-            await textChannel.SendMessageAsync("📊 No usage data has been recorded for this server yet.");
+            await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "stats.no_usage_data"));
             return;
         }
 
         long total = stats.PlatformUsage.Values.Sum();
         if (total <= 0)
         {
-            await textChannel.SendMessageAsync("📊 No usage data has been recorded for this server yet.");
+            await textChannel.SendMessageAsync(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "stats.no_usage_data"));
             return;
         }
 
@@ -2837,10 +2804,10 @@ class Program
             }));
 
         var embed = new EmbedBuilder()
-            .WithTitle($"Usage Breakdown — {textChannel.Guild.Name}")
+            .WithTitle(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "stats.usage_breakdown_title", textChannel.Guild.Name))
             .WithDescription(lines)
             .WithColor(Color.DarkBlue)
-            .WithFooter($"Total tracked platform hits: {total}")
+            .WithFooter(L(GetOrCreateGuildSettings(textChannel.Guild.Id), "stats.total_platform_hits", total))
             .Build();
 
         await textChannel.SendMessageAsync(embed: embed);
@@ -2891,40 +2858,21 @@ class Program
 
         await SendPaginatedEmbedAsync(
             channel,
-            "📦 ApolloBot Commands",
+            L(GetOrCreateGuildSettings(channel.Guild.Id), "help.title"),
             lines,
             "abhelp",
             page: 0,
             pageSize: DefaultPageSize,
             color: Color.Teal,
-            headerText: "Embed fixing, support, and utility commands.");
+            headerText: L(GetOrCreateGuildSettings(channel.Guild.Id), "help.header"));
     }
 
     private async Task SendAbout(SocketTextChannel channel)
     {
-        var embed = new EmbedBuilder()
-            .WithTitle("About ApolloBot")
-            .WithDescription("Replaces supported social links with embed-friendly providers and reposts them through a webhook relay.")
-            .AddField("Supported Platforms", "Twitter/X, Reddit, TikTok, Instagram, Kick, Bluesky, Threads (experimental)", false)
-            .AddField("Features",
-                "• Provider cycling buttons\n" +
-                "• Original poster-only controls\n" +
-                "• Delete button\n" +
-                "• Cooldowns\n" +
-                "• Persistence\n" +
-                "• User ignore system\n" +
-                "• User/server stats and achievements\n" +
-                "• Random fox, cat, and dog commands\n" +
-                "• Reply ping for original poster\n" +
-                "• Server enable/disable and whitelist settings\n" +
-                "• Slash roll command\n" +
-                "• Public vote command\n" +
-                "• Public planned updates list\n" +
-                "• Support command for bug reports and feedback\n" +
-                "• Dynamic provider management for bot owners", false)
-            .WithColor(Color.Gold)
-            .Build();
-
+        GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
+        var embed = new EmbedBuilder().WithTitle(L(settings, "about.title")).WithDescription(L(settings, "about.description"))
+            .AddField(L(settings, "about.platforms_title"), L(settings, "about.platforms"), false)
+            .AddField(L(settings, "about.features_title"), L(settings, "about.features"), false).WithColor(Color.Gold).Build();
         await channel.SendMessageAsync(embed: embed);
     }
 
@@ -2935,7 +2883,7 @@ class Program
             now - lastUsed < TimeSpan.FromSeconds(5))
         {
             int remaining = Math.Max(1, (int)Math.Ceiling((TimeSpan.FromSeconds(5) - (now - lastUsed)).TotalSeconds));
-            await channel.SendMessageAsync($"🐾 Give the animals **{remaining}s** to catch up.");
+            await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "animals.cooldown", remaining));
             return;
         }
 
@@ -3011,9 +2959,15 @@ class Program
             imageUrl = validatedImageUri.ToString();
             _lastAnimalImageUrls[animal] = imageUrl;
 
+            string issuerName = channel.Guild.GetUser(userId)?.DisplayName
+                ?? _client?.GetUser(userId)?.GlobalName
+                ?? _client?.GetUser(userId)?.Username
+                ?? userId.ToString();
+
             var embed = new EmbedBuilder()
-                .WithTitle($"{emoji} Here's a {displayName} from ApolloBot")
+                .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "animals.title", emoji, displayName))
                 .WithImageUrl(imageUrl)
+                .WithFooter($"Issued by: {issuerName}")
                 .WithColor(animal == "fox" ? Color.Orange : animal == "cat" ? Color.Purple : Color.Blue)
                 .Build();
 
@@ -3023,7 +2977,7 @@ class Program
         {
             Console.WriteLine($"[ANIMAL:{animal.ToUpperInvariant()}] Failed to fetch random {displayName}: {ex.Message}");
             _animalCooldowns.TryRemove(userId, out _);
-            await channel.SendMessageAsync($"{emoji} The {displayName}s are hiding right now. Try again in a moment.");
+            await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "animals.unavailable", emoji, displayName));
         }
     }
 
@@ -3034,7 +2988,7 @@ class Program
             .Select(p => $"**{FormatPlatformName(p.Key)}**: {string.Join(", ", p.Value)}");
 
         var embed = new EmbedBuilder()
-            .WithTitle("Configured Providers")
+            .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "providers.title"))
             .WithDescription(string.Join("\n", lines))
             .WithColor(Color.LightGrey)
             .Build();
@@ -3049,8 +3003,8 @@ class Program
     private async Task SendVoteMessage(SocketTextChannel channel, SocketUser user)
     {
         var embed = new EmbedBuilder()
-            .WithTitle("Support ApolloBot")
-            .WithDescription($"{user.Mention} you can vote for ApolloBot here:\nhttps://top.gg/bot/1486174544531034212/vote")
+            .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "vote.title"))
+            .WithDescription(L(GetOrCreateGuildSettings(channel.Guild.Id), "vote.description", user.Mention))
             .WithColor(Color.Gold)
             .Build();
 
@@ -3063,21 +3017,20 @@ class Program
         if (string.IsNullOrWhiteSpace(_supportUrl))
         {
             await channel.SendMessageAsync(
-                "Support is not configured yet. Set the `APOLLOBOT_SUPPORT_URL` environment variable to enable `!support`.");
+                L(GetOrCreateGuildSettings(channel.Guild.Id), "support.not_configured"));
             return;
         }
 
         var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Support & Feedback")
+            .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "support.title"))
             .WithDescription(
-                "Found a bug, have a suggestion, or want to send feedback?\n\n" +
-                $"Use the support page here:\n{_supportUrl}")
+                L(GetOrCreateGuildSettings(channel.Guild.Id), "support.description", _supportUrl))
             .WithColor(Color.Gold)
-            .WithFooter("Your feedback helps improve ApolloBot.")
+            .WithFooter(L(GetOrCreateGuildSettings(channel.Guild.Id), "support.footer"))
             .Build();
 
         var components = new ComponentBuilder()
-            .WithButton("Open Support Page", url: _supportUrl, style: ButtonStyle.Link)
+            .WithButton(L(GetOrCreateGuildSettings(channel.Guild.Id), "support.button"), url: _supportUrl, style: ButtonStyle.Link)
             .Build();
 
         await channel.SendMessageAsync(embed: embed, components: components);
@@ -3090,17 +3043,17 @@ class Program
             if (ownerUserId.HasValue)
                 await SendBotOwnerMessageAsync(channel, ownerUserId.Value, "There are no planned updates listed right now.");
             else
-                await channel.SendMessageAsync("There are no planned updates listed right now.");
+                await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "updates.none"));
             return;
         }
 
         string lines = string.Join("\n", _plannedUpdates.Select(kvp => $"`{kvp.Key}.` {kvp.Value}"));
 
         var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Planned Updates")
+            .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "updates.title"))
             .WithDescription(lines)
             .WithColor(Color.Blue)
-            .WithFooter("Subject to change.")
+            .WithFooter(L(GetOrCreateGuildSettings(channel.Guild.Id), "updates.footer"))
             .Build();
 
         if (ownerUserId.HasValue)
@@ -3376,7 +3329,7 @@ class Program
         {
             if (settings.WhitelistedChannelIds.Count == 0)
             {
-                await textChannel.SendMessageAsync("Whitelist is empty, so the bot currently works in **all channels**.");
+                await textChannel.SendMessageAsync(L(settings, "whitelist.empty"));
                 return;
             }
 
@@ -3384,7 +3337,7 @@ class Program
                 "\n",
                 settings.WhitelistedChannelIds.Select(id => $"• <#{id}>"));
 
-            await textChannel.SendMessageAsync($"**Whitelisted channels:**\n{listedChannels}");
+            await textChannel.SendMessageAsync(L(settings, "whitelist.list", listedChannels));
             return;
         }
 
@@ -3393,7 +3346,7 @@ class Program
             settings.WhitelistedChannelIds.Clear();
             SaveGuildSettings();
 
-            await textChannel.SendMessageAsync("Whitelist cleared. Embed fixer now works in **all channels**.");
+            await textChannel.SendMessageAsync(L(settings, "whitelist.cleared"));
             return;
         }
 
@@ -3406,14 +3359,14 @@ class Program
         {
             if (settings.WhitelistedChannelIds.Contains(targetChannelId))
             {
-                await textChannel.SendMessageAsync($"<#{targetChannelId}> is already whitelisted.");
+                await textChannel.SendMessageAsync(L(settings, "whitelist.already", targetChannelId));
                 return;
             }
 
             settings.WhitelistedChannelIds.Add(targetChannelId);
             SaveGuildSettings();
 
-            await textChannel.SendMessageAsync($"Added <#{targetChannelId}> to the whitelist.");
+            await textChannel.SendMessageAsync(L(settings, "whitelist.added", targetChannelId));
             return;
         }
 
@@ -3423,35 +3376,25 @@ class Program
             SaveGuildSettings();
 
             if (removed)
-                await textChannel.SendMessageAsync($"Removed <#{targetChannelId}> from the whitelist.");
+                await textChannel.SendMessageAsync(L(settings, "whitelist.removed", targetChannelId));
             else
-                await textChannel.SendMessageAsync($"<#{targetChannelId}> was not in the whitelist.");
+                await textChannel.SendMessageAsync(L(settings, "whitelist.not_present", targetChannelId));
 
             return;
         }
 
-        await textChannel.SendMessageAsync("Unknown whitelist action. Use `add`, `remove`, `list`, or `clear`.");
+        await textChannel.SendMessageAsync(L(settings, "whitelist.unknown_action"));
     }
 
     private async Task SendGuildStatus(SocketTextChannel channel, GuildSettings settings)
     {
-        string enabledText = settings.Enabled ? "Enabled" : "Disabled";
-        string whitelistText = settings.WhitelistedChannelIds.Count == 0
-            ? "All channels"
-            : string.Join("\n", settings.WhitelistedChannelIds.Select(id => $"• <#{id}>"));
-
-        var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Settings")
-            .WithDescription($"Settings for **{channel.Guild.Name}**")
-            .AddField("Status", enabledText, true)
-            .AddField("Silent Mode", settings.SilentMode ? "Enabled" : "Disabled", true)
-            .AddField("Relay Buttons", settings.ButtonsEnabled ? "Enabled" : "Disabled", true)
-            .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} seconds", true)
-            .AddField("Allowed Channels", whitelistText, false)
-            .WithColor(settings.Enabled ? Color.Green : Color.Red)
-            .WithCurrentTimestamp()
-            .Build();
-
+        string whitelistText = settings.WhitelistedChannelIds.Count == 0 ? L(settings, "setup.all_channels") : string.Join("\n", settings.WhitelistedChannelIds.Select(id => $"• <#{id}>"));
+        var embed = new EmbedBuilder().WithTitle(L(settings, "status.title")).WithDescription(L(settings, "status.description", channel.Guild.Name))
+            .AddField(L(settings, "status.status"), L(settings, settings.Enabled ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.silent_mode"), L(settings, settings.SilentMode ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.relay_buttons"), L(settings, settings.ButtonsEnabled ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.button_cooldown"), L(settings, "common.seconds", settings.ButtonCooldownSeconds), true)
+            .AddField(L(settings, "status.allowed_channels"), whitelistText, false).WithColor(settings.Enabled ? Color.Green : Color.Red).WithCurrentTimestamp().Build();
         await channel.SendMessageAsync(embed: embed);
     }
 
@@ -3459,14 +3402,14 @@ class Program
     {
         if (_client?.CurrentUser == null)
         {
-            await channel.SendMessageAsync("Couldn't inspect bot permissions because CurrentUser is null.");
+            await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.current_user_null"));
             return;
         }
 
         SocketGuildUser? botUser = channel.Guild.GetUser(_client.CurrentUser.Id);
         if (botUser == null)
         {
-            await channel.SendMessageAsync("Couldn't resolve the bot user in this server.");
+            await channel.SendMessageAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.bot_unresolved"));
             return;
         }
 
@@ -3475,20 +3418,20 @@ class Program
         List<string> missing = GetLikelyMissingPermissions(channel);
 
         string likelyMissingText = missing.Count == 0
-            ? "None detected from the current permission snapshot."
+            ? L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.none_missing")
             : string.Join(", ", missing);
 
         var embed = new EmbedBuilder()
-            .WithTitle("ApolloBot Permission Report")
-            .WithDescription($"Permission check for **{channel.Guild.Name}** in <#{channel.Id}>")
-            .AddField("View Channel", perms.ViewChannel, true)
-            .AddField("Send Messages", perms.SendMessages, true)
-            .AddField("Embed Links", perms.EmbedLinks, true)
-            .AddField("Read Message History", perms.ReadMessageHistory, true)
-            .AddField("Manage Messages", perms.ManageMessages, true)
-            .AddField("Manage Webhooks", perms.ManageWebhooks, true)
-            .AddField("Use Application Commands", guildPerms.UseApplicationCommands, true)
-            .AddField("Likely Missing", likelyMissingText, false)
+            .WithTitle(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.title"))
+            .WithDescription(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.description", channel.Guild.Name, channel.Id))
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.view_channel"), perms.ViewChannel, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.send_messages"), perms.SendMessages, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.embed_links"), perms.EmbedLinks, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.read_history"), perms.ReadMessageHistory, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.manage_messages"), perms.ManageMessages, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.manage_webhooks"), perms.ManageWebhooks, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.app_commands"), guildPerms.UseApplicationCommands, true)
+            .AddField(L(GetOrCreateGuildSettings(channel.Guild.Id), "perms.likely_missing"), likelyMissingText, false)
             .WithColor(missing.Count == 0 ? Color.Green : Color.Orange)
             .WithCurrentTimestamp()
             .Build();
@@ -3522,7 +3465,7 @@ class Program
                 case "userstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "userstats")) return; await HandleUserStatsSlashCommand(command); return;
                 case "serverstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "serverstats")) return; await HandleServerStatsSlashCommand(command); return;
                 case "fox": case "cat": case "dog": if (await StopIfOptionalSlashCommandDisabledAsync(command, command.Data.Name)) return; await HandleAnimalSlashCommand(command); return;
-                case "ping": await command.RespondAsync($"🏓 Pong! Gateway latency: **{_client?.Latency ?? 0}ms**"); return;
+                case "ping": await command.RespondAsync(LI(command, "common.pong", _client?.Latency ?? 0)); return;
                 case "embedfix": case "silent": case "togglebuttons": case "cooldown": case "whitelist": case "reset":
                     await HandleAdminSlashCommand(command); return;
                 case "setup": await HandleSetupSlashCommand(command); return;
@@ -3530,7 +3473,7 @@ class Program
                     await HandleLegacyPublicSlashCommand(command); return;
                 default:
                     if (!command.HasResponded)
-                        await command.RespondAsync("❓ **Unrecognized command.** Use `/help` to see available commands.", ephemeral: true);
+                        await command.RespondAsync(LI(command, "errors.unrecognized_slash"), ephemeral: true);
                     return;
             }
         }
@@ -3541,7 +3484,7 @@ class Program
             {
                 string responseText = command.Channel is SocketTextChannel textChannel && IsMissingPermissionsError(ex)
                     ? BuildSlashPermissionFailureMessage(command, textChannel)
-                    : "⚠️ I couldn't run that command. Try again in a moment.";
+                    : LI(command, "errors.command_failed");
                 if (!command.HasResponded) await command.RespondAsync(responseText, ephemeral: true);
                 else await command.FollowupAsync(responseText, ephemeral: true);
             }
@@ -3551,13 +3494,13 @@ class Program
 
     private async Task HandleUserSettingsSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel channel)
-        {
-            await command.RespondAsync("User settings are available inside servers. `/fix` and `/roll` are the only ApolloBot commands available in DMs.", ephemeral: true);
-            return;
-        }
         UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(command.User.Id);
-        await command.RespondAsync(embed: BuildUserSettingsEmbed(settings, channel.Guild.Id), components: BuildUserSettingsComponents(settings, command.User.Id, channel.Guild.Id, "twitter"), ephemeral: true);
+        ulong guildId = command.Channel is SocketTextChannel channel ? channel.Guild.Id : 0UL;
+
+        await command.RespondAsync(
+            embed: BuildUserSettingsEmbed(settings, guildId),
+            components: BuildUserSettingsComponents(settings, command.User.Id, guildId, "twitter"),
+            ephemeral: true);
     }
 
     private async Task HandleUserStatsSlashCommand(SocketSlashCommand command)
@@ -3565,18 +3508,18 @@ class Program
         IUser target = command.Data.Options.FirstOrDefault(x => x.Name == "user")?.Value as IUser ?? command.User;
         string displayName = target.GlobalName ?? target.Username;
         string avatarUrl = target.GetAvatarUrl(ImageFormat.Auto, 256) ?? target.GetDefaultAvatarUrl() ?? "";
-        await command.RespondAsync(embed: BuildUserStatsEmbed(target.Id, displayName, avatarUrl), components: BuildStatsProfileComponents("user", target.Id, command.User.Id));
+        await command.RespondAsync(embed: BuildUserStatsEmbed(target.Id, displayName, avatarUrl, GetOrCreateGuildSettings(((SocketTextChannel)command.Channel).Guild.Id)), components: BuildStatsProfileComponents("user", target.Id, command.User.Id, GetOrCreateGuildSettings(((SocketTextChannel)command.Channel).Guild.Id)));
     }
 
     private async Task HandleServerStatsSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command can only be used in a server.", ephemeral: true); return; }
-        await command.RespondAsync(embed: BuildServerStatsEmbed(channel.Guild), components: BuildStatsProfileComponents("server", channel.Guild.Id, command.User.Id));
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync(LI(command, "errors.server_only"), ephemeral: true); return; }
+        await command.RespondAsync(embed: BuildServerStatsEmbed(channel.Guild, GetOrCreateGuildSettings(channel.Guild.Id)), components: BuildStatsProfileComponents("server", channel.Guild.Id, command.User.Id, GetOrCreateGuildSettings(channel.Guild.Id)));
     }
 
     private async Task HandleAnimalSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Animal commands are available inside servers.", ephemeral: true); return; }
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync(LU(GetOrCreateUserIgnoreSettings(command.User.Id), "errors.animals_server_only"), ephemeral: true); return; }
         await command.DeferAsync(ephemeral: true);
         await SendRandomAnimalAsync(command.User.Id, channel, command.Data.Name);
         await command.DeleteOriginalResponseAsync();
@@ -3587,6 +3530,22 @@ class Program
 
     private string L(GuildSettings settings, string key, params object?[] args) =>
         _localization.Get(key, settings.LanguageCode, args);
+
+    private string LT(string languageCode, string key, params object?[] args) =>
+        _localization.Get(key, languageCode, args);
+
+    private string LU(UserIgnoreSettings settings, string key, params object?[] args) =>
+        _localization.Get(key, settings.LanguageCode, args);
+
+    private string LI(SocketSlashCommand command, string key, params object?[] args) =>
+        command.Channel is SocketTextChannel textChannel
+            ? L(GetOrCreateGuildSettings(textChannel.Guild.Id), key, args)
+            : LU(GetOrCreateUserIgnoreSettings(command.User.Id), key, args);
+
+    private string LC(SocketMessageComponent component, string key, params object?[] args) =>
+        component.Channel is SocketTextChannel textChannel
+            ? L(GetOrCreateGuildSettings(textChannel.Guild.Id), key, args)
+            : LU(GetOrCreateUserIgnoreSettings(component.User.Id), key, args);
 
     private Embed BuildServerSetupEmbed(SocketGuild guild, GuildSettings settings)
     {
@@ -3708,32 +3667,32 @@ class Program
 
     private async Task HandleSetupSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("Setup is only available inside servers.", ephemeral: true); return; }
-        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to open server setup.", ephemeral: true); return; }
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync(LU(GetOrCreateUserIgnoreSettings(command.User.Id), "errors.setup_server_only"), ephemeral: true); return; }
+        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "errors.manage_server_setup"), ephemeral: true); return; }
         GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
         await command.RespondAsync(embed: BuildServerSetupEmbed(channel.Guild, settings), components: BuildServerSetupComponents(channel.Guild.Id), ephemeral: true);
     }
 
     private async Task HandleAdminSlashCommand(SocketSlashCommand command)
     {
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command can only be used in a server.", ephemeral: true); return; }
-        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync("🔒 You need **Manage Server** to use that command.", ephemeral: true); return; }
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync(LI(command, "errors.server_only"), ephemeral: true); return; }
+        if (!SlashUserCanManageGuild(command)) { await command.RespondAsync(L(GetOrCreateGuildSettings(channel.Guild.Id), "errors.manage_server"), ephemeral: true); return; }
         GuildSettings settings = GetOrCreateGuildSettings(channel.Guild.Id);
         string name = command.Data.Name;
-        if (name == "embedfix") { settings.Enabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Embed fixing is now **{(settings.Enabled ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
-        if (name == "silent") { settings.SilentMode = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Silent mode is now **{(settings.SilentMode ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
-        if (name == "togglebuttons") { settings.ButtonsEnabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay buttons are now **{(settings.ButtonsEnabled ? "enabled" : "disabled")}** for this server.", ephemeral: true); return; }
-        if (name == "cooldown") { settings.ButtonCooldownSeconds = Convert.ToInt32(command.Data.Options.First(x => x.Name == "seconds").Value); SaveGuildSettings(); await command.RespondAsync($"✅ Relay button cooldown set to **{settings.ButtonCooldownSeconds} seconds**.", ephemeral: true); return; }
-        if (name == "reset") { settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3; settings.WhitelistedChannelIds.Clear(); settings.DisabledUserCommands.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ ApolloBot's server settings have been reset to defaults.", ephemeral: true); return; }
+        if (name == "embedfix") { settings.Enabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync(L(settings, settings.Enabled ? "admin.embed_enabled_check" : "admin.embed_disabled_check"), ephemeral: true); return; }
+        if (name == "silent") { settings.SilentMode = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync(L(settings, settings.SilentMode ? "admin.silent_enabled_check" : "admin.silent_disabled_check"), ephemeral: true); return; }
+        if (name == "togglebuttons") { settings.ButtonsEnabled = Convert.ToBoolean(command.Data.Options.First(x => x.Name == "enabled").Value); SaveGuildSettings(); await command.RespondAsync(L(settings, settings.ButtonsEnabled ? "admin.buttons_enabled" : "admin.buttons_disabled"), ephemeral: true); return; }
+        if (name == "cooldown") { settings.ButtonCooldownSeconds = Convert.ToInt32(command.Data.Options.First(x => x.Name == "seconds").Value); SaveGuildSettings(); await command.RespondAsync(L(settings, "admin.cooldown_set", settings.ButtonCooldownSeconds), ephemeral: true); return; }
+        if (name == "reset") { settings.Enabled = true; settings.SilentMode = false; settings.ButtonsEnabled = true; settings.ButtonCooldownSeconds = 3; settings.WhitelistedChannelIds.Clear(); settings.DisabledUserCommands.Clear(); SaveGuildSettings(); await command.RespondAsync(L(settings, "admin.reset_defaults"), ephemeral: true); return; }
         if (name == "whitelist")
         {
             string action = command.Data.Options.First(x => x.Name == "action").Value?.ToString() ?? "list";
             SocketGuildChannel? target = command.Data.Options.FirstOrDefault(x => x.Name == "channel")?.Value as SocketGuildChannel;
-            if (action == "list") { string list = settings.WhitelistedChannelIds.Count == 0 ? "No whitelist is set. ApolloBot can work in all channels." : string.Join("\n", settings.WhitelistedChannelIds.Select(id => $"<#{id}>")); await command.RespondAsync(list, ephemeral: true); return; }
-            if (action == "clear") { settings.WhitelistedChannelIds.Clear(); SaveGuildSettings(); await command.RespondAsync("✅ Channel whitelist cleared. ApolloBot can work in all channels again.", ephemeral: true); return; }
-            if (target == null) { await command.RespondAsync("Choose a channel when adding or removing a whitelist entry.", ephemeral: true); return; }
-            if (action == "add") { if (!settings.WhitelistedChannelIds.Contains(target.Id)) settings.WhitelistedChannelIds.Add(target.Id); SaveGuildSettings(); await command.RespondAsync($"✅ <#{target.Id}> added to the whitelist.", ephemeral: true); return; }
-            if (action == "remove") { settings.WhitelistedChannelIds.Remove(target.Id); SaveGuildSettings(); await command.RespondAsync($"✅ <#{target.Id}> removed from the whitelist.", ephemeral: true); return; }
+            if (action == "list") { string list = settings.WhitelistedChannelIds.Count == 0 ? L(settings, "whitelist.none") : string.Join("\n", settings.WhitelistedChannelIds.Select(id => $"<#{id}>")); await command.RespondAsync(list, ephemeral: true); return; }
+            if (action == "clear") { settings.WhitelistedChannelIds.Clear(); SaveGuildSettings(); await command.RespondAsync(L(settings, "whitelist.cleared_check"), ephemeral: true); return; }
+            if (target == null) { await command.RespondAsync(L(settings, "whitelist.choose_channel"), ephemeral: true); return; }
+            if (action == "add") { if (!settings.WhitelistedChannelIds.Contains(target.Id)) settings.WhitelistedChannelIds.Add(target.Id); SaveGuildSettings(); await command.RespondAsync(L(settings, "whitelist.added_check", target.Id), ephemeral: true); return; }
+            if (action == "remove") { settings.WhitelistedChannelIds.Remove(target.Id); SaveGuildSettings(); await command.RespondAsync(L(settings, "whitelist.removed_check", target.Id), ephemeral: true); return; }
         }
     }
 
@@ -3743,7 +3702,7 @@ class Program
         {
             if (await StopIfOptionalSlashCommandDisabledAsync(command, command.Data.Name)) return;
         }
-        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync("This command is available inside servers. `/fix` and `/roll` are available in DMs.", ephemeral: true); return; }
+        if (command.Channel is not SocketTextChannel channel) { await command.RespondAsync(LU(GetOrCreateUserIgnoreSettings(command.User.Id), "errors.legacy_server_only"), ephemeral: true); return; }
         await command.DeferAsync(ephemeral: true);
         switch (command.Data.Name)
         {
@@ -3771,7 +3730,7 @@ class Program
 
         if (string.IsNullOrWhiteSpace(rawText))
         {
-            await command.RespondAsync("Please provide a supported link to fix.", ephemeral: true);
+            await command.RespondAsync(LI(command, "fix.provide_link"), ephemeral: true);
             return;
         }
 
@@ -3789,7 +3748,7 @@ class Program
 
         if (newContent == rawText)
         {
-            await command.RespondAsync("I found the link, but nothing needed changing.", ephemeral: true);
+            await command.RespondAsync(LI(command, "fix.nothing_changed"), ephemeral: true);
             return;
         }
 
@@ -3822,7 +3781,7 @@ class Program
         if (webhook == null)
         {
             await command.FollowupAsync(
-                $"I couldn't create or access the relay webhook in this channel, so here's the fixed version instead:\n{newContent}",
+                LI(command, "fix.webhook_failed", newContent),
                 ephemeral: true);
             return;
         }
@@ -3830,7 +3789,7 @@ class Program
         if (string.IsNullOrWhiteSpace(webhook.Token))
         {
             await command.FollowupAsync(
-                $"The relay webhook exists, but its token is missing. Here's the fixed version instead:\n{newContent}",
+                LI(command, "fix.webhook_token_missing", newContent),
                 ephemeral: true);
             return;
         }
@@ -3864,7 +3823,7 @@ class Program
         RecordGuildEmbedFix(textChannel.Guild, detectedPlatforms);
         RecordUserEmbedFix(command.User, textChannel.Guild.Id, detectedPlatforms);
 
-        await command.FollowupAsync("Done! I posted the fixed embed version in this channel.", ephemeral: true);
+        await command.FollowupAsync(LI(command, "fix.done"), ephemeral: true);
     }
 
     private async Task HandleRollSlashCommand(SocketSlashCommand command)
@@ -3896,14 +3855,14 @@ class Program
         if (resistant && vulnerable)
         {
             await command.RespondAsync(
-                "Choose either **resistant** or **vulnerable**, not both.",
+                LI(command, "roll.resist_or_vulnerable"),
                 ephemeral: true);
             return;
         }
 
         if (exhaustionLevel < 0 || exhaustionLevel > 6)
         {
-            await command.RespondAsync("Exhaustion must be between **0** and **6**.", ephemeral: true);
+            await command.RespondAsync(LI(command, "roll.exhaustion_range"), ephemeral: true);
             return;
         }
 
@@ -3912,7 +3871,7 @@ class Program
         if (!parseResult.Success || parseResult.Request == null)
         {
             await command.RespondAsync(
-                "Invalid dice format.\nExamples: `1d20`, `1d20+6`, `2d6+3`",
+                LI(command, "roll.invalid_format"),
                 ephemeral: true);
             return;
         }
@@ -3928,31 +3887,31 @@ class Program
         if ((request.Advantage || request.Disadvantage) &&
             !(request.DiceCount == 1 && request.DieSize == 20))
         {
-            await command.RespondAsync("Advantage/disadvantage is only supported for **1d20** rolls.", ephemeral: true);
+            await command.RespondAsync(LI(command, "roll.advantage_d20"), ephemeral: true);
             return;
         }
 
         RollResult result = ExecuteRoll(request);
 
         var embed = new EmbedBuilder()
-            .WithTitle("🎲 Roll Result")
-            .WithDescription($"Requested by {command.User.Mention}")
-            .AddField("Roll", result.RollLabel, true)
-            .AddField("Mode", result.ModeLabel, true)
-            .AddField("Total", result.Total, true)
+            .WithTitle(LI(command, "roll.title"))
+            .WithDescription(LI(command, "roll.requested_by", command.User.Mention))
+            .AddField(LI(command, "roll.roll"), result.RollLabel, true)
+            .AddField(LI(command, "roll.mode"), LI(command, request.Advantage ? "roll.advantage" : request.Disadvantage ? "roll.disadvantage" : "roll.normal"), true)
+            .AddField(LI(command, "roll.total"), result.Total, true)
             .WithColor(Color.DarkGreen)
             .WithCurrentTimestamp();
 
         if (result.AdvantageRolls.Count > 0)
         {
             embed.AddField(
-                "Dice",
-                $"{result.AdvantageRolls[0]} and {result.AdvantageRolls[1]} → kept **{result.BaseRollTotal}**",
+                LI(command, "roll.dice"),
+                LI(command, "roll.kept", result.AdvantageRolls[0], result.AdvantageRolls[1], result.BaseRollTotal),
                 false);
         }
         else
         {
-            embed.AddField("Dice", string.Join(", ", result.IndividualRolls), false);
+            embed.AddField(LI(command, "roll.dice"), string.Join(", ", result.IndividualRolls), false);
         }
 
         if (request.Modifier != 0)
@@ -3961,21 +3920,21 @@ class Program
                 ? $"+{request.Modifier}"
                 : request.Modifier.ToString(CultureInfo.InvariantCulture);
 
-            embed.AddField("Modifier", modText, true);
+            embed.AddField(LI(command, "roll.modifier"), modText, true);
         }
 
         if (request.ExhaustionLevel > 0)
         {
             embed.AddField(
-                "Exhaustion",
-                $"Level {request.ExhaustionLevel} (**-{request.ExhaustionLevel * 2}**) ",
+                LI(command, "roll.exhaustion"),
+                LI(command, "roll.exhaustion_value", request.ExhaustionLevel, request.ExhaustionLevel * 2),
                 true);
         }
 
         if (request.Resistant)
-            embed.AddField("Resistance", $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
+            embed.AddField(LI(command, "roll.resistance"), $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
         else if (request.Vulnerable)
-            embed.AddField("Vulnerability", $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
+            embed.AddField(LI(command, "roll.vulnerability"), $"{result.PreDamageAdjustmentTotal} → **{result.Total}**", true);
 
         await command.RespondAsync(embed: embed.Build());
     }
@@ -4138,7 +4097,7 @@ class Program
     private MessageComponent BuildOwnerDeleteButton(ulong ownerUserId)
     {
         return new ComponentBuilder()
-            .WithButton("Delete", $"owner_delete:{ownerUserId}", ButtonStyle.Danger)
+            .WithButton("✖", $"owner_delete:{ownerUserId}", ButtonStyle.Danger)
             .Build();
     }
 
@@ -4156,13 +4115,13 @@ class Program
 
         if (parts.Length != 2 || !ulong.TryParse(parts[1], out ulong ownerUserId))
         {
-            await component.RespondAsync("This delete button is invalid.", ephemeral: true);
+            await component.RespondAsync(LC(component, "buttons.delete_invalid"), ephemeral: true);
             return;
         }
 
         if (component.User.Id != ownerUserId)
         {
-            await component.RespondAsync("This cannot be deleted by non authorized users.", ephemeral: true);
+            await component.RespondAsync(LC(component, "buttons.delete_unauthorized"), ephemeral: true);
             return;
         }
 
@@ -4177,7 +4136,7 @@ class Program
             !ulong.TryParse(parts[2], out ulong entityId) ||
             !ulong.TryParse(parts[3], out ulong ownerUserId))
         {
-            await component.RespondAsync("That profile button is no longer valid.", ephemeral: true);
+            await component.RespondAsync(LC(component, "buttons.profile_expired"), ephemeral: true);
             return;
         }
 
@@ -4205,12 +4164,12 @@ class Program
             string avatarUrl = user?.GetAvatarUrl(ImageFormat.Auto, 256) ?? user?.GetDefaultAvatarUrl() ?? "";
 
             Embed embed = action == "stats_achievements"
-                ? BuildUserAchievementsEmbed(entityId, displayName)
-                : BuildUserStatsEmbed(entityId, displayName, avatarUrl);
+                ? BuildUserAchievementsEmbed(entityId, displayName, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id))
+                : BuildUserStatsEmbed(entityId, displayName, avatarUrl, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id));
 
             MessageComponent components = action == "stats_achievements"
-                ? BuildAchievementComponents("user", entityId, ownerUserId)
-                : BuildStatsProfileComponents("user", entityId, ownerUserId);
+                ? BuildAchievementComponents("user", entityId, ownerUserId, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id))
+                : BuildStatsProfileComponents("user", entityId, ownerUserId, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id));
 
             await component.UpdateAsync(msg =>
             {
@@ -4225,17 +4184,17 @@ class Program
             SocketGuild? guild = _client?.GetGuild(entityId);
             if (guild == null)
             {
-                await component.RespondAsync("I can no longer find that server.", ephemeral: true);
+                await component.RespondAsync(LC(component, "buttons.server_missing"), ephemeral: true);
                 return;
             }
 
             Embed embed = action == "stats_achievements"
-                ? BuildServerAchievementsEmbed(guild)
-                : BuildServerStatsEmbed(guild);
+                ? BuildServerAchievementsEmbed(guild, GetOrCreateGuildSettings(guild.Id))
+                : BuildServerStatsEmbed(guild, GetOrCreateGuildSettings(guild.Id));
 
             MessageComponent components = action == "stats_achievements"
-                ? BuildAchievementComponents("server", entityId, ownerUserId)
-                : BuildStatsProfileComponents("server", entityId, ownerUserId);
+                ? BuildAchievementComponents("server", entityId, ownerUserId, GetOrCreateGuildSettings(guild.Id))
+                : BuildStatsProfileComponents("server", entityId, ownerUserId, GetOrCreateGuildSettings(guild.Id));
 
             await component.UpdateAsync(msg =>
             {
@@ -4245,7 +4204,7 @@ class Program
             return;
         }
 
-        await component.RespondAsync("That profile button is no longer valid.", ephemeral: true);
+        await component.RespondAsync(LC(component, "buttons.profile_expired"), ephemeral: true);
     }
 
     private async Task ButtonExecuted(SocketMessageComponent component)
@@ -4256,13 +4215,13 @@ class Program
         {
             if (component.Channel is not SocketTextChannel setupChannel || component.User is not SocketGuildUser setupUser || !setupUser.GuildPermissions.ManageGuild)
             {
-                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.manage_server_change"), ephemeral: true);
                 return;
             }
             string[] setupParts = customId.Split(':');
             if (setupParts.Length != 2 || !ulong.TryParse(setupParts[1], out ulong setupGuildId) || setupGuildId != setupChannel.Guild.Id)
             {
-                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.setup_expired"), ephemeral: true);
                 return;
             }
             GuildSettings guildSettings = GetOrCreateGuildSettings(setupGuildId);
@@ -4295,12 +4254,12 @@ class Program
             string[] parts = customId.Split(':');
             if (parts.Length != 3 || !ulong.TryParse(parts[1], out ulong ownerUserId) || !ulong.TryParse(parts[2], out ulong guildId))
             {
-                await component.RespondAsync("That settings button is no longer valid.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.settings_button_expired"), ephemeral: true);
                 return;
             }
             if (component.User.Id != ownerUserId)
             {
-                await component.RespondAsync("These settings belong to the person who opened the menu. Use `/usersettings` to open your own.", ephemeral: true);
+                await component.RespondAsync(LC(component, "errors.settings_owner"), ephemeral: true);
                 return;
             }
             UserIgnoreSettings settings = GetOrCreateUserIgnoreSettings(ownerUserId);
@@ -4308,6 +4267,7 @@ class Program
             settings.IgnoredGuildIds.Clear();
             settings.PreferredProviders.Clear();
             settings.ReplyNotificationsEnabled = true;
+            settings.LanguageCode = LocalizationManager.DefaultLanguage;
             SaveUserIgnoreSettings();
             await component.UpdateAsync(msg =>
             {
@@ -4424,7 +4384,7 @@ class Program
                 _relayStates.TryRemove(component.Message.Id, out _);
                 SaveRelayStates();
 
-                await component.FollowupAsync("Deleted your relayed message.", ephemeral: true);
+                await component.FollowupAsync(LC(component, "buttons.relay_deleted"), ephemeral: true);
                 return;
             }
 
@@ -4487,7 +4447,7 @@ class Program
             try
             {
                 await component.FollowupAsync(
-                    "Something went wrong while handling that button.",
+                    LC(component, "buttons.failed"),
                     ephemeral: true);
             }
             catch
@@ -4512,7 +4472,7 @@ class Program
         {
             var emptyEmbed = new EmbedBuilder()
                 .WithTitle(title)
-                .WithDescription("Nothing to display.")
+                .WithDescription(channel is SocketTextChannel tc ? L(GetOrCreateGuildSettings(tc.Guild.Id), "pagination.empty") : LU(GetOrCreateUserIgnoreSettings(ownerUserId), "pagination.empty"))
                 .WithColor(color)
                 .Build();
 
@@ -4537,7 +4497,7 @@ class Program
             .WithTitle(title)
             .WithDescription(description)
             .WithColor(color)
-            .WithFooter($"Page {page + 1}/{totalPages}")
+            .WithFooter(channel is SocketTextChannel tc2 ? L(GetOrCreateGuildSettings(tc2.Guild.Id), "pagination.page", page + 1, totalPages) : $"Page {page + 1}/{totalPages}")
             .Build();
 
         await channel.SendMessageAsync(
@@ -4553,11 +4513,11 @@ class Program
         string ownerSuffix = ownerUserId.HasValue ? $":{ownerUserId.Value}" : "";
 
         var builder = new ComponentBuilder()
-            .WithButton("Previous", $"page:{paginatorType}:{page - 1}{ownerSuffix}", ButtonStyle.Secondary, disabled: !hasPrevious)
-            .WithButton("Next", $"page:{paginatorType}:{page + 1}{ownerSuffix}", ButtonStyle.Primary, disabled: !hasNext);
+            .WithButton("◀", $"page:{paginatorType}:{page - 1}{ownerSuffix}", ButtonStyle.Secondary, disabled: !hasPrevious)
+            .WithButton("▶", $"page:{paginatorType}:{page + 1}{ownerSuffix}", ButtonStyle.Primary, disabled: !hasNext);
 
         if (ownerUserId.HasValue)
-            builder.WithButton("Delete", $"owner_delete:{ownerUserId.Value}", ButtonStyle.Danger);
+            builder.WithButton("✖", $"owner_delete:{ownerUserId.Value}", ButtonStyle.Danger);
 
         return builder.Build();
     }
@@ -4569,7 +4529,7 @@ class Program
             string[] parts = component.Data.CustomId.Split(':', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length != 3 && parts.Length != 4)
             {
-                await component.RespondAsync("Invalid paginator button.", ephemeral: true);
+                await component.RespondAsync(LC(component, "pagination.invalid_button"), ephemeral: true);
                 return;
             }
 
@@ -4581,7 +4541,7 @@ class Program
 
             if (!int.TryParse(parts[2], out int page))
             {
-                await component.RespondAsync("Invalid page value.", ephemeral: true);
+                await component.RespondAsync(LC(component, "pagination.invalid_page"), ephemeral: true);
                 return;
             }
 
@@ -4595,7 +4555,7 @@ class Program
                 case "botservers":
                     if (_client == null)
                     {
-                        await component.RespondAsync("Client not ready.", ephemeral: true);
+                        await component.RespondAsync(LC(component, "pagination.client_not_ready"), ephemeral: true);
                         return;
                     }
 
@@ -4612,8 +4572,9 @@ class Program
                 case "abhelp":
                     bool isAdmin = component.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
                     lines = BuildApolloBotHelpLines(isAdmin, GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id));
-                    title = "📦 ApolloBot Commands";
-                    headerText = "Embed fixing, support, and utility commands.";
+                    GuildSettings pageSettings = GetOrCreateGuildSettings(((SocketTextChannel)component.Channel).Guild.Id);
+                    title = L(pageSettings, "help.title");
+                    headerText = L(pageSettings, "help.header");
                     color = Color.Teal;
                     break;
 
@@ -4625,13 +4586,13 @@ class Program
                     break;
 
                 default:
-                    await component.RespondAsync("Unknown paginator.", ephemeral: true);
+                    await component.RespondAsync(LC(component, "pagination.unknown"), ephemeral: true);
                     return;
             }
 
             if (lines.Count == 0)
             {
-                await component.RespondAsync("Nothing to display.", ephemeral: true);
+                await component.RespondAsync(LC(component, "pagination.empty"), ephemeral: true);
                 return;
             }
 
@@ -4652,7 +4613,7 @@ class Program
                 .WithTitle(title)
                 .WithDescription(description)
                 .WithColor(color)
-                .WithFooter($"Page {page + 1}/{totalPages}")
+                .WithFooter(LC(component, "pagination.page", page + 1, totalPages))
                 .Build();
 
             await component.UpdateAsync(msg =>
@@ -4667,7 +4628,7 @@ class Program
 
             try
             {
-                await component.RespondAsync("Something went wrong while changing pages.", ephemeral: true);
+                await component.RespondAsync(LC(component, "pagination.failed"), ephemeral: true);
             }
             catch
             {
@@ -4712,52 +4673,16 @@ class Program
 
     private List<string> BuildApolloBotHelpLines(bool isAdmin, GuildSettings? settings = null)
     {
-        bool Enabled(string command) => settings == null || !IsOptionalCommandDisabled(settings.GuildId, command);
-        var lines = new List<string>
-        {
-            "**Getting Started**",
-            "Most ApolloBot commands are available as slash commands. Prefix commands are still supported.",
-            "`/usersettings` or `!ab usersettings` – Open your personal settings",
-            "`/about` or `!ab about` – What ApolloBot does",
-            "`/support` or `!ab support` – Support, bug reports, and feedback",
-            "",
-            "**Embeds & Providers**",
-            "`/providers` or `!ab providers` – See available embed providers",
-            "`/info` or `!ab info <message link>` – View relay information",
-            "`/perms` or `!ab perms` – Check ApolloBot's channel permissions",
-            "",
-            "**Stats & Extras**"
-        };
-
-        if (Enabled("userstats")) lines.Add("`/userstats` or `!ab userstats [@user|userID]` – User stats and achievements");
-        if (Enabled("serverstats")) lines.Add("`/serverstats` or `!ab serverstats` – Server stats and achievements");
-        var animals = new List<string>();
-        if (Enabled("fox")) animals.Add("`/fox`");
-        if (Enabled("cat")) animals.Add("`/cat`");
-        if (Enabled("dog")) animals.Add("`/dog`");
-        if (animals.Count > 0) lines.Add($"{string.Join(" ", animals)} – Random animal pictures");
-        if (Enabled("roll")) lines.Add("`/roll` – Roll dice");
-        if (Enabled("updates")) lines.Add("`/updates` – Planned updates");
-        if (Enabled("vote")) lines.Add("`/vote` – Vote for ApolloBot");
-        lines.Add("`/ping` – Check gateway latency");
-
-        if (isAdmin)
-        {
-            lines.Add("");
-            lines.Add("**Server Settings**");
-            lines.Add("`/setup` – Open the server setup panel and optional command settings");
-            lines.Add("`/embedfix` – Enable or disable embed fixing");
-            lines.Add("`/whitelist` – Manage allowed channels");
-            lines.Add("`/silent` – Change silent mode");
-            lines.Add("`/togglebuttons` – Enable or disable relay buttons");
-            lines.Add("`/cooldown` – Set the relay button cooldown");
-            lines.Add("`/reset` – Reset server settings");
-        }
-
-        lines.Add("");
-        lines.Add("**DM Commands**");
-        lines.Add("`/fix` and `/roll` are available when ApolloBot is added to your account.");
-        return lines;
+        settings ??= new GuildSettings { LanguageCode = LocalizationManager.DefaultLanguage };
+        bool Enabled(string command) => settings.GuildId == 0 || !IsOptionalCommandDisabled(settings.GuildId, command);
+        var lines = new List<string> { L(settings, "help.getting_started"), L(settings, "help.intro"), L(settings, "help.usersettings"), L(settings, "help.about"), L(settings, "help.support"), "", L(settings, "help.embeds_title"), L(settings, "help.providers"), L(settings, "help.info"), L(settings, "help.perms"), "", L(settings, "help.stats_title") };
+        if (Enabled("userstats")) lines.Add(L(settings, "help.userstats"));
+        if (Enabled("serverstats")) lines.Add(L(settings, "help.serverstats"));
+        var animals = new List<string>(); if (Enabled("fox")) animals.Add("`/fox`"); if (Enabled("cat")) animals.Add("`/cat`"); if (Enabled("dog")) animals.Add("`/dog`");
+        if (animals.Count > 0) lines.Add(L(settings, "help.animals", string.Join(" ", animals)));
+        if (Enabled("roll")) lines.Add(L(settings, "help.roll")); if (Enabled("updates")) lines.Add(L(settings, "help.updates")); if (Enabled("vote")) lines.Add(L(settings, "help.vote")); lines.Add(L(settings, "help.ping"));
+        if (isAdmin) { lines.Add(""); lines.Add(L(settings, "help.server_settings")); lines.Add(L(settings, "help.setup")); lines.Add(L(settings, "help.embedfix")); lines.Add(L(settings, "help.whitelist")); lines.Add(L(settings, "help.silent")); lines.Add(L(settings, "help.togglebuttons")); lines.Add(L(settings, "help.cooldown")); lines.Add(L(settings, "help.reset")); }
+        lines.Add(""); lines.Add(L(settings, "help.dm_title")); lines.Add(L(settings, "help.dm_commands")); return lines;
     }
 
     private GuildActivityState GetOrCreateGuildActivityState(SocketGuild guild)
@@ -6976,4 +6901,5 @@ class UserIgnoreSettings
     public List<ulong> IgnoredGuildIds { get; set; } = new();
     public Dictionary<string, string> PreferredProviders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool ReplyNotificationsEnabled { get; set; } = true;
+    public string LanguageCode { get; set; } = LocalizationManager.DefaultLanguage;
 }
