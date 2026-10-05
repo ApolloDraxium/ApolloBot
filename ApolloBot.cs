@@ -56,6 +56,7 @@ public static class DataPathHelper
 
 class Program
 {
+    private readonly LocalizationManager _localization = new(Path.Combine(AppContext.BaseDirectory, "Localization"));
     private DiscordSocketClient? _client;
     private readonly Random _random = Random.Shared;
     private static readonly HttpClient AnimalHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -188,6 +189,7 @@ class Program
     public async Task MainAsync()
     {
         Directory.CreateDirectory(DataDirectory);
+        _localization.Load();
 
         LoadRelayStates();
         LoadGuildSettings();
@@ -3521,32 +3523,38 @@ class Program
     private bool SlashUserCanManageGuild(SocketSlashCommand command) =>
         command.User is SocketGuildUser guildUser && guildUser.GuildPermissions.ManageGuild;
 
+    private string L(GuildSettings settings, string key, params object?[] args) =>
+        _localization.Get(key, settings.LanguageCode, args);
+
     private Embed BuildServerSetupEmbed(SocketGuild guild, GuildSettings settings)
     {
         settings.DisabledUserCommands ??= new List<string>();
-        string channels = settings.WhitelistedChannelIds.Count == 0 ? "All channels" : $"{settings.WhitelistedChannelIds.Count} whitelisted channel(s)";
+        string channels = settings.WhitelistedChannelIds.Count == 0
+            ? L(settings, "setup.all_channels")
+            : L(settings, "setup.whitelisted_channels", settings.WhitelistedChannelIds.Count);
         string optional = settings.DisabledUserCommands.Count == 0
-            ? "All enabled"
-            : $"{settings.DisabledUserCommands.Count} disabled";
+            ? L(settings, "setup.all_enabled")
+            : L(settings, "setup.disabled_count", settings.DisabledUserCommands.Count);
 
         return new EmbedBuilder()
-            .WithTitle("🛠️ ApolloBot Server Setup")
-            .WithDescription("Manage ApolloBot for this server. Only members with **Manage Server** can use these controls.")
-            .AddField("Embed Fixing", settings.Enabled ? "Enabled" : "Disabled", true)
-            .AddField("Channels", channels, true)
-            .AddField("Relay Buttons", settings.ButtonsEnabled ? "Enabled" : "Disabled", true)
-            .AddField("Silent Mode", settings.SilentMode ? "Enabled" : "Disabled", true)
-            .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} seconds", true)
-            .AddField("Optional Commands", optional, true)
+            .WithTitle(L(settings, "setup.title"))
+            .WithDescription(L(settings, "setup.description"))
+            .AddField(L(settings, "setup.embed_fixing"), L(settings, settings.Enabled ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.channels"), channels, true)
+            .AddField(L(settings, "setup.relay_buttons"), L(settings, settings.ButtonsEnabled ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.silent_mode"), L(settings, settings.SilentMode ? "common.enabled" : "common.disabled"), true)
+            .AddField(L(settings, "setup.button_cooldown"), L(settings, "common.seconds", settings.ButtonCooldownSeconds), true)
+            .AddField(L(settings, "setup.optional_commands"), optional, true)
             .WithColor(Color.Teal)
             .Build();
     }
 
     private MessageComponent BuildServerSetupComponents(ulong guildId)
     {
+        GuildSettings settings = GetOrCreateGuildSettings(guildId);
         return new ComponentBuilder()
-            .WithButton("Command Settings", $"serversetup_commands:{guildId}", ButtonStyle.Primary)
-            .WithButton("Refresh", $"serversetup_refresh:{guildId}", ButtonStyle.Secondary)
+            .WithButton(L(settings, "setup.command_settings_button"), $"serversetup_commands:{guildId}", ButtonStyle.Primary)
+            .WithButton(L(settings, "common.refresh"), $"serversetup_refresh:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
 
@@ -3554,13 +3562,13 @@ class Program
     {
         settings.DisabledUserCommands ??= new List<string>();
         string disabled = settings.DisabledUserCommands.Count == 0
-            ? "None"
+            ? L(settings, "common.none")
             : string.Join("\n", settings.DisabledUserCommands.Where(OptionalUserCommands.Contains).Select(x => $"• {FormatOptionalCommandName(x)}"));
 
         return new EmbedBuilder()
-            .WithTitle("⚙️ Optional Command Settings")
-            .WithDescription("Choose which optional commands members can use in this server. Core ApolloBot commands always stay available.")
-            .AddField("Currently disabled", disabled, false)
+            .WithTitle(L(settings, "setup.optional_title"))
+            .WithDescription(L(settings, "setup.optional_description"))
+            .AddField(L(settings, "setup.currently_disabled"), disabled, false)
             .WithColor(Color.Teal)
             .Build();
     }
@@ -3570,20 +3578,20 @@ class Program
         settings.DisabledUserCommands ??= new List<string>();
         var menu = new SelectMenuBuilder()
             .WithCustomId($"serversetup_disabledcommands:{guildId}")
-            .WithPlaceholder("Select commands to disable")
+            .WithPlaceholder(L(settings, "setup.select_commands"))
             .WithMinValues(0)
             .WithMaxValues(OptionalUserCommands.Length);
 
         foreach (string command in OptionalUserCommands)
         {
-            menu.AddOption(FormatOptionalCommandName(command), command, $"Disable /{command} and its prefix version where available",
+            menu.AddOption(FormatOptionalCommandName(command), command, L(settings, "setup.disable_command_description", command),
                 isDefault: settings.DisabledUserCommands.Contains(command, StringComparer.OrdinalIgnoreCase));
         }
 
         return new ComponentBuilder()
             .WithSelectMenu(menu)
-            .WithButton("Enable all", $"serversetup_enableall:{guildId}", ButtonStyle.Secondary)
-            .WithButton("Back", $"serversetup_back:{guildId}", ButtonStyle.Secondary)
+            .WithButton(L(settings, "setup.enable_all"), $"serversetup_enableall:{guildId}", ButtonStyle.Secondary)
+            .WithButton(L(settings, "common.back"), $"serversetup_back:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
 
@@ -6840,6 +6848,7 @@ class GuildSettings
     public bool SilentMode { get; set; } = false;
     public bool ButtonsEnabled { get; set; } = true;
     public int ButtonCooldownSeconds { get; set; } = 3;
+    public string LanguageCode { get; set; } = LocalizationManager.DefaultLanguage;
     public List<ulong> WhitelistedChannelIds { get; set; } = new();
     public List<string> DisabledUserCommands { get; set; } = new();
 }

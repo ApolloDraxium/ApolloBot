@@ -1,0 +1,31 @@
+{
+  "common": {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "none": "None",
+    "seconds": "{0} seconds",
+    "back": "Back",
+    "refresh": "Refresh"
+  },
+  "setup": {
+    "title": "🛠️ ApolloBot Server Setup",
+    "description": "Manage ApolloBot for this server. Only members with **Manage Server** can use these controls.",
+    "embed_fixing": "Embed Fixing",
+    "channels": "Channels",
+    "all_channels": "All channels",
+    "whitelisted_channels": "{0} whitelisted channel(s)",
+    "relay_buttons": "Relay Buttons",
+    "silent_mode": "Silent Mode",
+    "button_cooldown": "Button Cooldown",
+    "optional_commands": "Optional Commands",
+    "all_enabled": "All enabled",
+    "disabled_count": "{0} disabled",
+    "command_settings_button": "Command Settings",
+    "optional_title": "⚙️ Optional Command Settings",
+    "optional_description": "Choose which optional commands members can use in this server. Core ApolloBot commands always stay available.",
+    "currently_disabled": "Currently disabled",
+    "select_commands": "Select commands to disable",
+    "disable_command_description": "Disable /{0} and its prefix version where available",
+    "enable_all": "Enable all"
+  }
+}
