@@ -1,0 +1,31 @@
+{
+  "common": {
+    "enabled": "Activado",
+    "disabled": "Desactivado",
+    "seconds": "{0} segundos",
+    "none": "Ninguno",
+    "refresh": "Actualizar",
+    "back": "Volver"
+  },
+  "setup": {
+    "title": "🛠️ Configuración del servidor de ApolloBot",
+    "description": "Administra ApolloBot para este servidor. Solo los miembros con el permiso **Gestionar servidor** pueden usar estos controles.",
+    "all_channels": "Todos los canales",
+    "whitelisted_channels": "{0} canal(es) permitido(s)",
+    "all_enabled": "Todos activados",
+    "disabled_count": "{0} desactivado(s)",
+    "embed_fixing": "Corrección de embeds",
+    "channels": "Canales",
+    "relay_buttons": "Botones del relay",
+    "silent_mode": "Modo silencioso",
+    "button_cooldown": "Espera de los botones",
+    "optional_commands": "Comandos opcionales",
+    "command_settings_button": "Ajustes de comandos",
+    "optional_title": "⚙️ Ajustes de comandos opcionales",
+    "optional_description": "Elige qué comandos opcionales pueden usar los miembros en este servidor. Los comandos principales de ApolloBot siempre estarán disponibles.",
+    "currently_disabled": "Actualmente desactivados",
+    "select_commands": "Selecciona los comandos que quieres desactivar",
+    "disable_command_description": "Desactiva /{0} y su versión con prefijo cuando esté disponible",
+    "enable_all": "Activar todos"
+  }
+}

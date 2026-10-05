@@ -2117,6 +2117,45 @@ class Program
     private async Task SelectMenuExecuted(SocketMessageComponent component)
     {
         string customId = component.Data.CustomId;
+
+        if (customId.StartsWith("serversetup_setlanguage:", StringComparison.Ordinal))
+        {
+            if (component.Channel is not SocketTextChannel setupChannel ||
+                component.User is not SocketGuildUser setupUser ||
+                !setupUser.GuildPermissions.ManageGuild)
+            {
+                await component.RespondAsync("🔒 You need **Manage Server** to change server settings.", ephemeral: true);
+                return;
+            }
+
+            string[] setupParts = customId.Split(':');
+            if (setupParts.Length != 2 ||
+                !ulong.TryParse(setupParts[1], out ulong setupGuildId) ||
+                setupGuildId != setupChannel.Guild.Id)
+            {
+                await component.RespondAsync("That setup menu is no longer valid.", ephemeral: true);
+                return;
+            }
+
+            string? selectedLanguage = component.Data.Values.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(selectedLanguage) || !_localization.IsSupported(selectedLanguage))
+            {
+                await component.RespondAsync("That language is not currently available.", ephemeral: true);
+                return;
+            }
+
+            GuildSettings guildSettings = GetOrCreateGuildSettings(setupGuildId);
+            guildSettings.LanguageCode = _localization.NormalizeLanguage(selectedLanguage);
+            SaveGuildSettings();
+
+            await component.UpdateAsync(msg =>
+            {
+                msg.Embed = Optional.Create(BuildLanguageSettingsEmbed(guildSettings));
+                msg.Components = Optional.Create(BuildLanguageSettingsComponents(guildSettings, setupGuildId));
+            });
+            return;
+        }
+
         if (customId.StartsWith("serversetup_disabledcommands:", StringComparison.Ordinal))
         {
             if (component.Channel is not SocketTextChannel setupChannel || component.User is not SocketGuildUser setupUser || !setupUser.GuildPermissions.ManageGuild)
@@ -4212,25 +4251,6 @@ class Program
             if (customId.StartsWith("serversetup_language:", StringComparison.Ordinal))
             {
                 await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildLanguageSettingsEmbed(guildSettings)); msg.Components = Optional.Create(BuildLanguageSettingsComponents(guildSettings, setupGuildId)); });
-                return;
-            }
-            if (customId.StartsWith("serversetup_setlanguage:", StringComparison.Ordinal))
-            {
-                string? selectedLanguage = component.Data.Values.FirstOrDefault();
-                if (string.IsNullOrWhiteSpace(selectedLanguage) || !_localization.IsSupported(selectedLanguage))
-                {
-                    await component.RespondAsync("That language is not currently available.", ephemeral: true);
-                    return;
-                }
-
-                guildSettings.LanguageCode = _localization.NormalizeLanguage(selectedLanguage);
-                SaveGuildSettings();
-
-                await component.UpdateAsync(msg =>
-                {
-                    msg.Embed = Optional.Create(BuildLanguageSettingsEmbed(guildSettings));
-                    msg.Components = Optional.Create(BuildLanguageSettingsComponents(guildSettings, setupGuildId));
-                });
                 return;
             }
             if (customId.StartsWith("serversetup_enableall:", StringComparison.Ordinal))
