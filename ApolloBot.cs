@@ -2065,7 +2065,7 @@ class Program
     {
         GuildSettings? guildSettings = guildId != 0 ? GetOrCreateGuildSettings(guildId) : null;
         string T(string key, params object?[] args) =>
-            guildSettings != null ? T(key, args) : LU(settings, key, args);
+            guildSettings != null ? L(guildSettings, key, args) : LU(settings, key, args);
 
         bool ignoredHere = guildId != 0 && settings.IgnoredGuildIds.Contains(guildId);
         string fixing = settings.IgnoreAllServers
@@ -2098,7 +2098,7 @@ class Program
     {
         GuildSettings? guildSettings = guildId != 0 ? GetOrCreateGuildSettings(guildId) : null;
         string T(string key, params object?[] args) =>
-            guildSettings != null ? T(key, args) : LU(settings, key, args);
+            guildSettings != null ? L(guildSettings, key, args) : LU(settings, key, args);
 
         if (!_providers.ContainsKey(selectedPlatform))
             selectedPlatform = _providers.Keys.FirstOrDefault() ?? "twitter";
