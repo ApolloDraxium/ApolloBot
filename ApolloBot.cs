@@ -3545,6 +3545,7 @@ class Program
             .AddField(L(settings, "setup.silent_mode"), L(settings, settings.SilentMode ? "common.enabled" : "common.disabled"), true)
             .AddField(L(settings, "setup.button_cooldown"), L(settings, "common.seconds", settings.ButtonCooldownSeconds), true)
             .AddField(L(settings, "setup.optional_commands"), optional, true)
+            .AddField("Language", GetLanguageDisplayName(settings.LanguageCode), true)
             .WithColor(Color.Teal)
             .Build();
     }
@@ -3554,7 +3555,54 @@ class Program
         GuildSettings settings = GetOrCreateGuildSettings(guildId);
         return new ComponentBuilder()
             .WithButton(L(settings, "setup.command_settings_button"), $"serversetup_commands:{guildId}", ButtonStyle.Primary)
+            .WithButton("🌍 Language", $"serversetup_language:{guildId}", ButtonStyle.Secondary)
             .WithButton(L(settings, "common.refresh"), $"serversetup_refresh:{guildId}", ButtonStyle.Secondary)
+            .Build();
+    }
+
+    private static string GetLanguageDisplayName(string? languageCode)
+    {
+        return languageCode?.ToLowerInvariant() switch
+        {
+            "en-gb" => "🇬🇧 English (UK)",
+            "de-de" => "🇩🇪 Deutsch",
+            "es-es" => "🇪🇸 Español",
+            "fr-fr" => "🇫🇷 Français",
+            "pt-br" => "🇧🇷 Português (Brasil)",
+            _ => $"🌐 {languageCode ?? LocalizationManager.DefaultLanguage}"
+        };
+    }
+
+    private Embed BuildLanguageSettingsEmbed(GuildSettings settings)
+    {
+        return new EmbedBuilder()
+            .WithTitle("🌍 ApolloBot Language")
+            .WithDescription("Choose the language ApolloBot uses in this server.")
+            .AddField("Current language", GetLanguageDisplayName(settings.LanguageCode), false)
+            .WithColor(Color.Teal)
+            .Build();
+    }
+
+    private MessageComponent BuildLanguageSettingsComponents(GuildSettings settings, ulong guildId)
+    {
+        string current = _localization.NormalizeLanguage(settings.LanguageCode);
+        var menu = new SelectMenuBuilder()
+            .WithCustomId($"serversetup_setlanguage:{guildId}")
+            .WithPlaceholder("Select a language")
+            .WithMinValues(1)
+            .WithMaxValues(1);
+
+        foreach (string language in _localization.AvailableLanguages.OrderBy(x => x))
+        {
+            menu.AddOption(
+                GetLanguageDisplayName(language),
+                language,
+                isDefault: language.Equals(current, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return new ComponentBuilder()
+            .WithSelectMenu(menu)
+            .WithButton(L(settings, "common.back"), $"serversetup_back:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
 
@@ -4158,6 +4206,30 @@ class Program
             if (customId.StartsWith("serversetup_commands:", StringComparison.Ordinal))
             {
                 await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildCommandSettingsEmbed(guildSettings)); msg.Components = Optional.Create(BuildCommandSettingsComponents(guildSettings, setupGuildId)); });
+                return;
+            }
+            if (customId.StartsWith("serversetup_language:", StringComparison.Ordinal))
+            {
+                await component.UpdateAsync(msg => { msg.Embed = Optional.Create(BuildLanguageSettingsEmbed(guildSettings)); msg.Components = Optional.Create(BuildLanguageSettingsComponents(guildSettings, setupGuildId)); });
+                return;
+            }
+            if (customId.StartsWith("serversetup_setlanguage:", StringComparison.Ordinal))
+            {
+                string? selectedLanguage = component.Data.Values.FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(selectedLanguage) || !_localization.IsSupported(selectedLanguage))
+                {
+                    await component.RespondAsync("That language is not currently available.", ephemeral: true);
+                    return;
+                }
+
+                guildSettings.LanguageCode = _localization.NormalizeLanguage(selectedLanguage);
+                SaveGuildSettings();
+
+                await component.UpdateAsync(msg =>
+                {
+                    msg.Embed = Optional.Create(BuildLanguageSettingsEmbed(guildSettings));
+                    msg.Components = Optional.Create(BuildLanguageSettingsComponents(guildSettings, setupGuildId));
+                });
                 return;
             }
             if (customId.StartsWith("serversetup_enableall:", StringComparison.Ordinal))
