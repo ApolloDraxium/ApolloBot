@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 public sealed class LocalizationManager
 {
@@ -62,6 +63,11 @@ public sealed class LocalizationManager
             destination[key]=property.Value.GetString()??"";
         }
     }
+    private static HashSet<string> GetFormatTokens(string value) =>
+        Regex.Matches(value, @"\{\d+(?:,[^}:]+)?(?:[^}]*)\}")
+            .Select(match => Regex.Match(match.Value, @"\{\d+").Value)
+            .ToHashSet(StringComparer.Ordinal);
+
     private void ValidateAgainstDefault()
     {
         Dictionary<string,string> fallback=_languages[DefaultLanguage]; _completeLanguages.Add(DefaultLanguage);
@@ -71,12 +77,17 @@ public sealed class LocalizationManager
             if(language.Equals(DefaultLanguage,StringComparison.OrdinalIgnoreCase)) continue;
             string[] missing=fallback.Keys.Where(key=>!strings.ContainsKey(key)).OrderBy(x=>x).ToArray();
             string[] extra=strings.Keys.Where(key=>!fallback.ContainsKey(key)).OrderBy(x=>x).ToArray();
-            if(missing.Length==0){_completeLanguages.Add(language);Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count}/{fallback.Count} ✓");}
+            string[] badFormats=fallback.Keys.Where(strings.ContainsKey)
+                .Where(key => !GetFormatTokens(fallback[key]).SetEquals(GetFormatTokens(strings[key])))
+                .OrderBy(x=>x).ToArray();
+            if(missing.Length==0 && badFormats.Length==0){_completeLanguages.Add(language);Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count}/{fallback.Count} ✓");}
             else
             {
                 Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count-missing.Length}/{fallback.Count} - INCOMPLETE (not advertised)");
                 foreach(string key in missing.Take(50)) Console.WriteLine($"[LOCALIZATION]   missing: {key}");
-                if(missing.Length>50) Console.WriteLine($"[LOCALIZATION]   ...and {missing.Length-50} more");
+                if(missing.Length>50) Console.WriteLine($"[LOCALIZATION]   ...and {missing.Length-50} more missing keys");
+                foreach(string key in badFormats.Take(50)) Console.WriteLine($"[LOCALIZATION]   placeholder mismatch: {key}");
+                if(badFormats.Length>50) Console.WriteLine($"[LOCALIZATION]   ...and {badFormats.Length-50} more placeholder mismatches");
             }
             foreach(string key in extra.Take(20)) Console.WriteLine($"[LOCALIZATION]   extra: {key}");
         }
