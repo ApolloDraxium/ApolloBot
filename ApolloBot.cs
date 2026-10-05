@@ -3565,6 +3565,7 @@ class Program
         return languageCode?.ToLowerInvariant() switch
         {
             "en-gb" => "🇬🇧 English (UK)",
+            "en-us" => "🇺🇸 English (US)",
             "de-de" => "🇩🇪 Deutsch",
             "es-es" => "🇪🇸 Español",
             "fr-fr" => "🇫🇷 Français",
