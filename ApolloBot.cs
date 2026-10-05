@@ -2038,33 +2038,44 @@ class Program
 
     private Embed BuildUserSettingsEmbed(UserIgnoreSettings settings, ulong guildId)
     {
+        GuildSettings guildSettings = GetOrCreateGuildSettings(guildId);
         bool ignoredHere = settings.IgnoredGuildIds.Contains(guildId);
-        string fixing = settings.IgnoreAllServers ? "Disabled everywhere" : ignoredHere ? "Disabled in this server" : "Enabled";
+        string fixing = settings.IgnoreAllServers
+            ? L(guildSettings, "usersettings.disabled_everywhere")
+            : ignoredHere
+                ? L(guildSettings, "usersettings.disabled_server")
+                : L(guildSettings, "common.enabled");
+
         string providerSummary = string.Join("\n", _providers.Keys.OrderBy(FormatPlatformName).Select(platform =>
         {
-            string value = settings.PreferredProviders.TryGetValue(platform, out string? preferred) ? preferred : "Automatic";
+            string value = settings.PreferredProviders.TryGetValue(platform, out string? preferred)
+                ? preferred
+                : L(guildSettings, "usersettings.automatic");
             return $"**{FormatPlatformName(platform)}:** {value}";
         }));
 
         return new EmbedBuilder()
-            .WithTitle("⚙️ ApolloBot User Settings")
-            .WithDescription("Change how ApolloBot behaves for you. Your settings follow you between servers.")
-            .AddField("🔗 Embed Fixing", fixing, false)
-            .AddField("🌐 Preferred Providers", providerSummary, false)
-            .AddField("🔔 Reply Notifications", settings.ReplyNotificationsEnabled ? "Enabled" : "Disabled", true)
-            .WithFooter("Choose a platform below, then pick the provider you prefer. Automatic uses ApolloBot's default.")
+            .WithTitle(L(guildSettings, "usersettings.title"))
+            .WithDescription(L(guildSettings, "usersettings.description"))
+            .AddField(L(guildSettings, "usersettings.embed_fixing"), fixing, false)
+            .AddField(L(guildSettings, "usersettings.preferred_providers"), providerSummary, false)
+            .AddField(L(guildSettings, "usersettings.reply_notifications"),
+                L(guildSettings, settings.ReplyNotificationsEnabled ? "common.enabled" : "common.disabled"), true)
+            .WithFooter(L(guildSettings, "usersettings.footer"))
             .WithColor(Color.Teal)
             .Build();
     }
 
     private MessageComponent BuildUserSettingsComponents(UserIgnoreSettings settings, ulong userId, ulong guildId, string selectedPlatform)
     {
+        GuildSettings guildSettings = GetOrCreateGuildSettings(guildId);
+
         if (!_providers.ContainsKey(selectedPlatform))
             selectedPlatform = _providers.Keys.FirstOrDefault() ?? "twitter";
 
         var platformMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_platform:{userId}:{guildId}")
-            .WithPlaceholder("Choose a platform")
+            .WithPlaceholder(L(guildSettings, "usersettings.choose_platform"))
             .WithMinValues(1)
             .WithMaxValues(1);
 
@@ -2073,10 +2084,12 @@ class Program
 
         var providerMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_provider:{userId}:{guildId}:{selectedPlatform}")
-            .WithPlaceholder($"Preferred {FormatPlatformName(selectedPlatform)} provider")
+            .WithPlaceholder(L(guildSettings, "usersettings.preferred_provider_placeholder", FormatPlatformName(selectedPlatform)))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption("Automatic", "__auto__", "Use ApolloBot's default provider", isDefault: !settings.PreferredProviders.ContainsKey(selectedPlatform));
+            .AddOption(L(guildSettings, "usersettings.automatic"), "__auto__",
+                L(guildSettings, "usersettings.automatic_description"),
+                isDefault: !settings.PreferredProviders.ContainsKey(selectedPlatform));
 
         if (_providers.TryGetValue(selectedPlatform, out List<string>? providers))
         {
@@ -2090,27 +2103,37 @@ class Program
 
         var fixingMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_fixing:{userId}:{guildId}")
-            .WithPlaceholder("Embed fixing for your links")
+            .WithPlaceholder(L(guildSettings, "usersettings.fixing_placeholder"))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption("Enabled", "enabled", "Fix my links normally", isDefault: !settings.IgnoreAllServers && !settings.IgnoredGuildIds.Contains(guildId))
-            .AddOption("Disabled in this server", "server", "Do not fix my links in this server", isDefault: !settings.IgnoreAllServers && settings.IgnoredGuildIds.Contains(guildId))
-            .AddOption("Disabled everywhere", "global", "Do not fix my links in any server", isDefault: settings.IgnoreAllServers);
+            .AddOption(L(guildSettings, "common.enabled"), "enabled",
+                L(guildSettings, "usersettings.fix_normally"),
+                isDefault: !settings.IgnoreAllServers && !settings.IgnoredGuildIds.Contains(guildId))
+            .AddOption(L(guildSettings, "usersettings.disabled_server"), "server",
+                L(guildSettings, "usersettings.disable_server_description"),
+                isDefault: !settings.IgnoreAllServers && settings.IgnoredGuildIds.Contains(guildId))
+            .AddOption(L(guildSettings, "usersettings.disabled_everywhere"), "global",
+                L(guildSettings, "usersettings.disable_global_description"),
+                isDefault: settings.IgnoreAllServers);
 
         var replyMenu = new SelectMenuBuilder()
             .WithCustomId($"usersettings_replies:{userId}:{guildId}")
-            .WithPlaceholder("Reply notifications")
+            .WithPlaceholder(L(guildSettings, "usersettings.reply_notifications"))
             .WithMinValues(1)
             .WithMaxValues(1)
-            .AddOption("Reply notifications on", "on", "Ping me when someone replies to my relay", isDefault: settings.ReplyNotificationsEnabled)
-            .AddOption("Reply notifications off", "off", "Do not ping me for relay replies", isDefault: !settings.ReplyNotificationsEnabled);
+            .AddOption(L(guildSettings, "usersettings.replies_on"), "on",
+                L(guildSettings, "usersettings.replies_on_description"),
+                isDefault: settings.ReplyNotificationsEnabled)
+            .AddOption(L(guildSettings, "usersettings.replies_off"), "off",
+                L(guildSettings, "usersettings.replies_off_description"),
+                isDefault: !settings.ReplyNotificationsEnabled);
 
         return new ComponentBuilder()
             .WithSelectMenu(platformMenu)
             .WithSelectMenu(providerMenu)
             .WithSelectMenu(fixingMenu)
             .WithSelectMenu(replyMenu)
-            .WithButton("Reset to defaults", $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
+            .WithButton(L(guildSettings, "usersettings.reset"), $"usersettings_reset:{userId}:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
 
@@ -3584,7 +3607,7 @@ class Program
             .AddField(L(settings, "setup.silent_mode"), L(settings, settings.SilentMode ? "common.enabled" : "common.disabled"), true)
             .AddField(L(settings, "setup.button_cooldown"), L(settings, "common.seconds", settings.ButtonCooldownSeconds), true)
             .AddField(L(settings, "setup.optional_commands"), optional, true)
-            .AddField("Language", GetLanguageDisplayName(settings.LanguageCode), true)
+            .AddField(L(settings, "language.field"), GetLanguageDisplayName(settings.LanguageCode), true)
             .WithColor(Color.Teal)
             .Build();
     }
@@ -3594,7 +3617,7 @@ class Program
         GuildSettings settings = GetOrCreateGuildSettings(guildId);
         return new ComponentBuilder()
             .WithButton(L(settings, "setup.command_settings_button"), $"serversetup_commands:{guildId}", ButtonStyle.Primary)
-            .WithButton("🌍 Language", $"serversetup_language:{guildId}", ButtonStyle.Secondary)
+            .WithButton(L(settings, "language.button"), $"serversetup_language:{guildId}", ButtonStyle.Secondary)
             .WithButton(L(settings, "common.refresh"), $"serversetup_refresh:{guildId}", ButtonStyle.Secondary)
             .Build();
     }
@@ -3616,9 +3639,9 @@ class Program
     private Embed BuildLanguageSettingsEmbed(GuildSettings settings)
     {
         return new EmbedBuilder()
-            .WithTitle("🌍 ApolloBot Language")
-            .WithDescription("Choose the language ApolloBot uses in this server.")
-            .AddField("Current language", GetLanguageDisplayName(settings.LanguageCode), false)
+            .WithTitle(L(settings, "language.title"))
+            .WithDescription(L(settings, "language.description"))
+            .AddField(L(settings, "language.current"), GetLanguageDisplayName(settings.LanguageCode), false)
             .WithColor(Color.Teal)
             .Build();
     }
@@ -3628,7 +3651,7 @@ class Program
         string current = _localization.NormalizeLanguage(settings.LanguageCode);
         var menu = new SelectMenuBuilder()
             .WithCustomId($"serversetup_setlanguage:{guildId}")
-            .WithPlaceholder("Select a language")
+            .WithPlaceholder(L(settings, "language.select"))
             .WithMinValues(1)
             .WithMaxValues(1);
 

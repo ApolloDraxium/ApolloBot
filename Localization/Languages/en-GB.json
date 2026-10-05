@@ -27,5 +27,36 @@
     "select_commands": "Select commands to disable",
     "disable_command_description": "Disable /{0} and its prefix version where available",
     "enable_all": "Enable all"
+  },
+  "language": {
+    "field": "Language",
+    "button": "🌍 Language",
+    "title": "🌍 ApolloBot Language",
+    "description": "Choose the language ApolloBot uses in this server.",
+    "current": "Current language",
+    "select": "Select a language"
+  },
+  "usersettings": {
+    "title": "⚙️ ApolloBot User Settings",
+    "description": "Change how ApolloBot behaves for you. Your settings follow you between servers.",
+    "embed_fixing": "🔗 Embed Fixing",
+    "preferred_providers": "🌐 Preferred Providers",
+    "reply_notifications": "🔔 Reply Notifications",
+    "footer": "Choose a platform below, then pick the provider you prefer. Automatic uses ApolloBot's default.",
+    "choose_platform": "Choose a platform",
+    "preferred_provider_placeholder": "Preferred {0} provider",
+    "automatic": "Automatic",
+    "automatic_description": "Use ApolloBot's default provider",
+    "fixing_placeholder": "Embed fixing for your links",
+    "fix_normally": "Fix my links normally",
+    "disabled_server": "Disabled in this server",
+    "disable_server_description": "Do not fix my links in this server",
+    "disabled_everywhere": "Disabled everywhere",
+    "disable_global_description": "Do not fix my links in any server",
+    "replies_on": "Reply notifications on",
+    "replies_on_description": "Ping me when someone replies to my relay",
+    "replies_off": "Reply notifications off",
+    "replies_off_description": "Do not ping me for relay replies",
+    "reset": "Reset to defaults"
   }
 }

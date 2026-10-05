@@ -1,0 +1,62 @@
+{
+  "common": {
+    "enabled": "Activé",
+    "disabled": "Désactivé",
+    "seconds": "{0} secondes",
+    "none": "Aucun",
+    "refresh": "Actualiser",
+    "back": "Retour"
+  },
+  "setup": {
+    "title": "🛠️ Configuration du serveur ApolloBot",
+    "description": "Gérez ApolloBot pour ce serveur. Seuls les membres disposant de la permission **Gérer le serveur** peuvent utiliser ces contrôles.",
+    "all_channels": "Tous les salons",
+    "whitelisted_channels": "{0} salon(s) autorisé(s)",
+    "all_enabled": "Tous activés",
+    "disabled_count": "{0} désactivé(s)",
+    "embed_fixing": "Correction des embeds",
+    "channels": "Salons",
+    "relay_buttons": "Boutons de relais",
+    "silent_mode": "Mode silencieux",
+    "button_cooldown": "Délai des boutons",
+    "optional_commands": "Commandes facultatives",
+    "command_settings_button": "Paramètres des commandes",
+    "optional_title": "⚙️ Paramètres des commandes facultatives",
+    "optional_description": "Choisissez les commandes facultatives que les membres peuvent utiliser sur ce serveur. Les commandes principales d’ApolloBot restent toujours disponibles.",
+    "currently_disabled": "Actuellement désactivées",
+    "select_commands": "Sélectionnez les commandes à désactiver",
+    "disable_command_description": "Désactive /{0} et sa version avec préfixe lorsqu’elle est disponible",
+    "enable_all": "Tout activer"
+  },
+  "language": {
+    "field": "Langue",
+    "button": "🌍 Langue",
+    "title": "🌍 Langue d’ApolloBot",
+    "description": "Choisissez la langue utilisée par ApolloBot sur ce serveur.",
+    "current": "Langue actuelle",
+    "select": "Sélectionnez une langue"
+  },
+  "usersettings": {
+    "title": "⚙️ Paramètres utilisateur d’ApolloBot",
+    "description": "Modifiez le comportement d’ApolloBot pour vous. Vos paramètres vous suivent d’un serveur à l’autre.",
+    "embed_fixing": "🔗 Correction des embeds",
+    "preferred_providers": "🌐 Fournisseurs préférés",
+    "reply_notifications": "🔔 Notifications de réponse",
+    "footer": "Choisissez une plateforme ci-dessous, puis votre fournisseur préféré. Automatique utilise le fournisseur par défaut d’ApolloBot.",
+    "choose_platform": "Choisissez une plateforme",
+    "preferred_provider_placeholder": "Fournisseur {0} préféré",
+    "automatic": "Automatique",
+    "automatic_description": "Utiliser le fournisseur par défaut d’ApolloBot",
+    "fixing_placeholder": "Correction des embeds pour vos liens",
+    "fix_normally": "Corriger mes liens normalement",
+    "disabled_server": "Désactivé sur ce serveur",
+    "disable_server_description": "Ne pas corriger mes liens sur ce serveur",
+    "disabled_everywhere": "Désactivé partout",
+    "disable_global_description": "Ne corriger mes liens sur aucun serveur",
+    "replies_on": "Notifications de réponse activées",
+    "replies_on_description": "Me mentionner lorsqu’une personne répond à mon relais",
+    "replies_off": "Notifications de réponse désactivées",
+    "replies_off_description": "Ne pas me mentionner lors des réponses à mon relais",
+    "reset": "Rétablir les paramètres par défaut"
+  }
+}

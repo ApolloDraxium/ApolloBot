@@ -27,5 +27,36 @@
     "select_commands": "Selecciona los comandos que quieres desactivar",
     "disable_command_description": "Desactiva /{0} y su versión con prefijo cuando esté disponible",
     "enable_all": "Activar todos"
+  },
+  "language": {
+    "field": "Idioma",
+    "button": "🌍 Idioma",
+    "title": "🌍 Idioma de ApolloBot",
+    "description": "Elige el idioma que ApolloBot usará en este servidor.",
+    "current": "Idioma actual",
+    "select": "Selecciona un idioma"
+  },
+  "usersettings": {
+    "title": "⚙️ Ajustes de usuario de ApolloBot",
+    "description": "Cambia cómo se comporta ApolloBot para ti. Tus ajustes te acompañan entre servidores.",
+    "embed_fixing": "🔗 Corrección de embeds",
+    "preferred_providers": "🌐 Proveedores preferidos",
+    "reply_notifications": "🔔 Notificaciones de respuestas",
+    "footer": "Elige una plataforma y después el proveedor que prefieras. Automático usa el proveedor predeterminado de ApolloBot.",
+    "choose_platform": "Elige una plataforma",
+    "preferred_provider_placeholder": "Proveedor preferido de {0}",
+    "automatic": "Automático",
+    "automatic_description": "Usar el proveedor predeterminado de ApolloBot",
+    "fixing_placeholder": "Corrección de embeds para tus enlaces",
+    "fix_normally": "Corregir mis enlaces normalmente",
+    "disabled_server": "Desactivado en este servidor",
+    "disable_server_description": "No corregir mis enlaces en este servidor",
+    "disabled_everywhere": "Desactivado en todas partes",
+    "disable_global_description": "No corregir mis enlaces en ningún servidor",
+    "replies_on": "Notificaciones de respuestas activadas",
+    "replies_on_description": "Mencionarme cuando alguien responda a mi relay",
+    "replies_off": "Notificaciones de respuestas desactivadas",
+    "replies_off_description": "No mencionarme cuando alguien responda a mi relay",
+    "reset": "Restablecer valores predeterminados"
   }
 }

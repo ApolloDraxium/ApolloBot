@@ -27,5 +27,36 @@
     "select_commands": "Zu deaktivierende Befehle auswählen",
     "disable_command_description": "/{0} und die Präfix-Version deaktivieren, sofern verfügbar",
     "enable_all": "Alle aktivieren"
+  },
+  "language": {
+    "field": "Sprache",
+    "button": "🌍 Sprache",
+    "title": "🌍 ApolloBot-Sprache",
+    "description": "Wähle die Sprache, die ApolloBot auf diesem Server verwendet.",
+    "current": "Aktuelle Sprache",
+    "select": "Sprache auswählen"
+  },
+  "usersettings": {
+    "title": "⚙️ ApolloBot-Benutzereinstellungen",
+    "description": "Lege fest, wie sich ApolloBot für dich verhält. Deine Einstellungen gelten serverübergreifend.",
+    "embed_fixing": "🔗 Embed-Korrektur",
+    "preferred_providers": "🌐 Bevorzugte Anbieter",
+    "reply_notifications": "🔔 Antwortbenachrichtigungen",
+    "footer": "Wähle unten eine Plattform und anschließend deinen bevorzugten Anbieter. Automatisch verwendet den Standardanbieter von ApolloBot.",
+    "choose_platform": "Plattform auswählen",
+    "preferred_provider_placeholder": "Bevorzugter Anbieter für {0}",
+    "automatic": "Automatisch",
+    "automatic_description": "Standardanbieter von ApolloBot verwenden",
+    "fixing_placeholder": "Embed-Korrektur für deine Links",
+    "fix_normally": "Meine Links normal korrigieren",
+    "disabled_server": "Auf diesem Server deaktiviert",
+    "disable_server_description": "Meine Links auf diesem Server nicht korrigieren",
+    "disabled_everywhere": "Überall deaktiviert",
+    "disable_global_description": "Meine Links auf keinem Server korrigieren",
+    "replies_on": "Antwortbenachrichtigungen an",
+    "replies_on_description": "Mich erwähnen, wenn jemand auf meinen Relay antwortet",
+    "replies_off": "Antwortbenachrichtigungen aus",
+    "replies_off_description": "Mich bei Antworten auf meinen Relay nicht erwähnen",
+    "reset": "Auf Standard zurücksetzen"
   }
 }
