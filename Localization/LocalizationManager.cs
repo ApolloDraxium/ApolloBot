@@ -21,7 +21,7 @@ public sealed class LocalizationManager
         _languages.Clear();
         Directory.CreateDirectory(_directory);
 
-        foreach (string file in Directory.EnumerateFiles(_directory, "*.json", SearchOption.TopDirectoryOnly))
+        foreach (string file in Directory.EnumerateFiles(_directory, "*.json", SearchOption.AllDirectories))
         {
             string language = Path.GetFileNameWithoutExtension(file);
 
