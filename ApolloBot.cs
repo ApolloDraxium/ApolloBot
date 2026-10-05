@@ -410,13 +410,19 @@ class Program
                 return;
             }
 
+            GuildSettings welcomeSettings = GetOrCreateGuildSettings(guild.Id);
+
             var embed = new EmbedBuilder()
-                .WithTitle(L(GetOrCreateGuildSettings(guild.Id), "welcome.title"))
-                .WithDescription(L(GetOrCreateGuildSettings(guild.Id), "welcome.description"))
+                .WithTitle(L(welcomeSettings, "welcome.title"))
+                .WithDescription(L(welcomeSettings, "welcome.description"))
                 .WithColor(Color.Red)
                 .Build();
 
-            await channel.SendMessageAsync(embed: embed);
+            var welcomeComponents = new ComponentBuilder()
+                .WithButton(L(welcomeSettings, "language.button"), $"serversetup_language:{guild.Id}", ButtonStyle.Secondary, emote: new Emoji("🌐"))
+                .Build();
+
+            await channel.SendMessageAsync(embed: embed, components: welcomeComponents);
             Console.WriteLine($"[JOIN] Welcome message sent in #{channel.Name} ({channel.Id}) for guild '{guild.Name}'.");
         }
         catch (Exception ex)
