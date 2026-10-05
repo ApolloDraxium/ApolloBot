@@ -4478,7 +4478,11 @@ class Program
         {
             var emptyEmbed = new EmbedBuilder()
                 .WithTitle(title)
-                .WithDescription(channel is SocketTextChannel tc ? L(GetOrCreateGuildSettings(tc.Guild.Id), "pagination.empty") : LU(GetOrCreateUserIgnoreSettings(ownerUserId), "pagination.empty"))
+                .WithDescription(channel is SocketTextChannel tc
+                    ? L(GetOrCreateGuildSettings(tc.Guild.Id), "pagination.empty")
+                    : ownerUserId.HasValue
+                        ? LU(GetOrCreateUserIgnoreSettings(ownerUserId.Value), "pagination.empty")
+                        : _localization.Get("pagination.empty", LocalizationManager.DefaultLanguage))
                 .WithColor(color)
                 .Build();
 
