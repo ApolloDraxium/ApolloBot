@@ -63,10 +63,18 @@ public sealed class LocalizationManager
             destination[key]=property.Value.GetString()??"";
         }
     }
-    private static HashSet<string> GetFormatTokens(string value) =>
+    private static Dictionary<string, int> GetFormatTokens(string value) =>
         Regex.Matches(value, @"\{\d+(?:,[^}:]+)?(?:[^}]*)\}")
             .Select(match => Regex.Match(match.Value, @"\{\d+").Value)
-            .ToHashSet(StringComparer.Ordinal);
+            .GroupBy(token => token, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+
+    private static bool FormatTokensMatch(string left, string right)
+    {
+        Dictionary<string, int> a = GetFormatTokens(left);
+        Dictionary<string, int> b = GetFormatTokens(right);
+        return a.Count == b.Count && a.All(pair => b.TryGetValue(pair.Key, out int count) && count == pair.Value);
+    }
 
     private void ValidateAgainstDefault()
     {
@@ -78,9 +86,9 @@ public sealed class LocalizationManager
             string[] missing=fallback.Keys.Where(key=>!strings.ContainsKey(key)).OrderBy(x=>x).ToArray();
             string[] extra=strings.Keys.Where(key=>!fallback.ContainsKey(key)).OrderBy(x=>x).ToArray();
             string[] badFormats=fallback.Keys.Where(strings.ContainsKey)
-                .Where(key => !GetFormatTokens(fallback[key]).SetEquals(GetFormatTokens(strings[key])))
+                .Where(key => !FormatTokensMatch(fallback[key], strings[key]))
                 .OrderBy(x=>x).ToArray();
-            if(missing.Length==0 && badFormats.Length==0){_completeLanguages.Add(language);Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count}/{fallback.Count} ✓");}
+            if(missing.Length==0 && extra.Length==0 && badFormats.Length==0){_completeLanguages.Add(language);Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count}/{fallback.Count} ✓");}
             else
             {
                 Console.WriteLine($"[LOCALIZATION] {language}: {fallback.Count-missing.Length}/{fallback.Count} - INCOMPLETE (not advertised)");

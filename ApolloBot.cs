@@ -466,6 +466,15 @@ class Program
                 "en-us" => "en-US",
                 "es-es" => "es-ES",
                 "pt-br" => "pt-BR",
+                "sv-se" => "sv-SE",
+                "da-dk" => "da",
+                "fi-fi" => "fi",
+                "nb-no" => "no",
+                "nl-nl" => "nl",
+                "pl-pl" => "pl",
+                "ru-ru" => "ru",
+                "ja-jp" => "ja",
+                "zh-cn" => "zh-CN",
                 _ => language
             };
 
@@ -3589,6 +3598,15 @@ class Program
             "es-es" => "🇪🇸 Español",
             "fr-fr" => "🇫🇷 Français",
             "pt-br" => "🇧🇷 Português (Brasil)",
+            "sv-se" => "🇸🇪 Svenska",
+            "da-dk" => "🇩🇰 Dansk",
+            "fi-fi" => "🇫🇮 Suomi",
+            "nb-no" => "🇳🇴 Norsk (Bokmål)",
+            "nl-nl" => "🇳🇱 Nederlands",
+            "pl-pl" => "🇵🇱 Polski",
+            "ru-ru" => "🇷🇺 Русский",
+            "ja-jp" => "🇯🇵 日本語",
+            "zh-cn" => "🇨🇳 简体中文",
             _ => $"🌐 {languageCode ?? LocalizationManager.DefaultLanguage}"
         };
     }
