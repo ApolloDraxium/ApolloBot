@@ -580,9 +580,36 @@ class Program
             .AddOption(new SlashCommandOptionBuilder().WithName("action").WithDescription(LT("en-GB", "slash.option_action")).WithDescriptionLocalizations(SlashDescriptionLocalizations("slash.option_action")).WithType(ApplicationCommandOptionType.String).WithRequired(true).AddChoice("add", "add", SlashChoiceLocalizations("slash.choice_add")).AddChoice("remove", "remove", SlashChoiceLocalizations("slash.choice_remove")).AddChoice("list", "list", SlashChoiceLocalizations("slash.choice_list")).AddChoice("clear", "clear", SlashChoiceLocalizations("slash.choice_clear")))
             .AddOption("channel", ApplicationCommandOptionType.Channel, LT("en-GB", "slash.option_channel"), isRequired: false, descriptionLocalizations: SlashDescriptionLocalizations("slash.option_channel"));
 
+        SlashCommandOptionBuilder ProviderDomainOption(bool required = true) =>
+            new SlashCommandOptionBuilder().WithName("domain").WithDescription("Provider domain").WithType(ApplicationCommandOptionType.String).WithRequired(required);
+
+        SlashCommandOptionBuilder ProviderPlatformOption() =>
+            new SlashCommandOptionBuilder().WithName("platform").WithDescription("Platform to manage").WithType(ApplicationCommandOptionType.String).WithRequired(true)
+                .AddChoice("Twitter / X", "twitter").AddChoice("Reddit", "reddit").AddChoice("TikTok", "tiktok").AddChoice("Instagram", "instagram")
+                .AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads");
+
+        var ownerProviderGroup = new SlashCommandOptionBuilder()
+            .WithName("provider").WithDescription("Manage embed providers").WithType(ApplicationCommandOptionType.SubCommandGroup)
+            .AddOption(new SlashCommandOptionBuilder().WithName("list").WithDescription("List provider priority").WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption(new SlashCommandOptionBuilder().WithName("platform").WithDescription("Platform (omit to list all)").WithType(ApplicationCommandOptionType.String).WithRequired(false)
+                    .AddChoice("Twitter / X", "twitter").AddChoice("Reddit", "reddit").AddChoice("TikTok", "tiktok").AddChoice("Instagram", "instagram").AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads")))
+            .AddOption(new SlashCommandOptionBuilder().WithName("add").WithDescription("Add a provider").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption()))
+            .AddOption(new SlashCommandOptionBuilder().WithName("remove").WithDescription("Remove a provider").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption()))
+            .AddOption(new SlashCommandOptionBuilder().WithName("move").WithDescription("Move a provider to a priority position").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption())
+                .AddOption(new SlashCommandOptionBuilder().WithName("position").WithDescription("Priority position (1 = primary)").WithType(ApplicationCommandOptionType.Integer).WithRequired(true).WithMinValue(1)))
+            .AddOption(new SlashCommandOptionBuilder().WithName("primary").WithDescription("Make a provider the automatic default").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption()))
+            .AddOption(new SlashCommandOptionBuilder().WithName("clear").WithDescription("Clear all providers for a platform").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()));
+
+        var ownerBotCommand = new SlashCommandBuilder()
+            .WithName("bot")
+            .WithDescription("ApolloBot owner controls")
+            .WithContextTypes(sharedCommandContexts)
+            .WithIntegrationTypes(sharedIntegrationTypes)
+            .AddOption(ownerProviderGroup);
+
         ApplicationCommandProperties[] commands = new ApplicationCommandProperties[]
         {
-            rollCommand.Build(), fixCommand.Build(),
+            rollCommand.Build(), fixCommand.Build(), ownerBotCommand.Build(),
             SimpleGuildCommand("help", "slash.help").Build(),
             SimpleGuildCommand("about", "slash.about").Build(),
             SimpleGuildCommand("updates", "slash.updates").Build(),
@@ -1602,6 +1629,12 @@ class Program
         if (sub == "serverstats")
         {
             await SendSingleServerStatsAsync(textChannel, message.Author.Id, parts);
+            return;
+        }
+
+        if (sub == "serversettings")
+        {
+            await SendServerSettingsDiagnosticAsync(textChannel, message.Author.Id, parts);
             return;
         }
 
@@ -3348,6 +3381,8 @@ class Program
                 "`!bot provider list <platform>`\n" +
                 "`!bot provider add <platform> <domain>`\n" +
                 "`!bot provider remove <platform> <domain>`\n" +
+                "`!bot provider move <platform> <domain> <position>`\n" +
+                "`!bot provider primary <platform> <domain>`\n" +
                 "`!bot provider clear <platform>`");
             return;
         }
@@ -3442,7 +3477,39 @@ class Program
             return;
         }
 
-        await SendBotOwnerMessageAsync(channel, ownerUserId, "Unknown provider action. Use add, remove, list, or clear.");
+        if (action is "move" or "primary")
+        {
+            string? existing = _providers[targetPlatform]
+                .FirstOrDefault(x => string.Equals(x, domain, StringComparison.OrdinalIgnoreCase));
+
+            if (existing == null)
+            {
+                await SendBotOwnerMessageAsync(channel, ownerUserId, $"{domain} was not found for {FormatPlatformName(targetPlatform)}.");
+                return;
+            }
+
+            int position = 1;
+            if (action == "move")
+            {
+                if (parts.Length < 6 || !int.TryParse(parts[5], out position) || position < 1 || position > _providers[targetPlatform].Count)
+                {
+                    await SendBotOwnerMessageAsync(channel, ownerUserId, $"Position must be between 1 and {_providers[targetPlatform].Count}.");
+                    return;
+                }
+            }
+
+            _providers[targetPlatform].Remove(existing);
+            _providers[targetPlatform].Insert(position - 1, existing);
+            SaveProviders();
+
+            string order = string.Join("\n", _providers[targetPlatform].Select((provider, index) =>
+                $"**{index + 1}.** `{provider}`{(index == 0 ? " ← Primary / Auto" : string.Empty)}"));
+            await SendBotOwnerMessageAsync(channel, ownerUserId,
+                $"✅ Updated **{FormatPlatformName(targetPlatform)}** provider priority.\n\n{order}");
+            return;
+        }
+
+        await SendBotOwnerMessageAsync(channel, ownerUserId, "Unknown provider action. Use add, remove, move, primary, list, or clear.");
     }
 
     private async Task HandleWhitelistCommand(SocketUserMessage message, SocketTextChannel textChannel, GuildSettings settings, string[] parts)
@@ -3598,6 +3665,7 @@ class Program
             {
                 case "roll": if (await StopIfOptionalSlashCommandDisabledAsync(command, "roll")) return; await HandleRollSlashCommand(command); return;
                 case "fix": await HandleFixSlashCommand(command); return;
+                case "bot": await HandleOwnerBotSlashCommand(command); return;
                 case "usersettings": await HandleUserSettingsSlashCommand(command); return;
                 case "userstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "userstats")) return; await HandleUserStatsSlashCommand(command); return;
                 case "serverstats": if (await StopIfOptionalSlashCommandDisabledAsync(command, "serverstats")) return; await HandleServerStatsSlashCommand(command); return;
@@ -3627,6 +3695,123 @@ class Program
             }
             catch { }
         }
+    }
+
+    private async Task HandleOwnerBotSlashCommand(SocketSlashCommand command)
+    {
+        // Discord cannot hide a global command from one specific user, so keep /bot registered
+        // but hard-lock execution to ApolloBot's configured owner IDs. Every response is ephemeral.
+        if (!IsBotOwner(command.User))
+        {
+            await command.RespondAsync("❌ This command is restricted to the ApolloBot owner.", ephemeral: true);
+            return;
+        }
+
+        SocketSlashCommandDataOption? group = command.Data.Options.FirstOrDefault();
+        if (group == null || !group.Name.Equals("provider", StringComparison.OrdinalIgnoreCase))
+        {
+            await command.RespondAsync("❓ Unknown owner command.", ephemeral: true);
+            return;
+        }
+
+        SocketSlashCommandDataOption? actionOption = group.Options.FirstOrDefault();
+        if (actionOption == null)
+        {
+            await command.RespondAsync("Please choose a provider action.", ephemeral: true);
+            return;
+        }
+
+        string action = actionOption.Name.ToLowerInvariant();
+        string? platform = actionOption.Options.FirstOrDefault(x => x.Name == "platform")?.Value?.ToString()?.ToLowerInvariant();
+        string? rawDomain = actionOption.Options.FirstOrDefault(x => x.Name == "domain")?.Value?.ToString();
+        string domain = SanitizeProviderDomain(rawDomain ?? string.Empty);
+
+        if (action == "list" && string.IsNullOrWhiteSpace(platform))
+        {
+            string all = string.Join("\n\n", _providers.Select(pair =>
+                $"**{FormatPlatformName(pair.Key)}**\n" + string.Join("\n", pair.Value.Select((p, i) => $"{i + 1}. `{p}`{(i == 0 ? " ← Primary / Auto" : string.Empty)}"))));
+            await command.RespondAsync(all, ephemeral: true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(platform) || !_providers.ContainsKey(platform))
+        {
+            await command.RespondAsync("Invalid platform.", ephemeral: true);
+            return;
+        }
+
+        if (action == "list")
+        {
+            string order = string.Join("\n", _providers[platform].Select((p, i) => $"{i + 1}. `{p}`{(i == 0 ? " ← Primary / Auto" : string.Empty)}"));
+            await command.RespondAsync($"**{FormatPlatformName(platform)} providers**\n{order}", ephemeral: true);
+            return;
+        }
+
+        if (action == "clear")
+        {
+            _providers[platform].Clear();
+            SaveProviders();
+            await command.RespondAsync($"✅ Cleared all providers for **{FormatPlatformName(platform)}**.", ephemeral: true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            await command.RespondAsync("Please provide a valid provider domain.", ephemeral: true);
+            return;
+        }
+
+        string? existing = _providers[platform].FirstOrDefault(x => string.Equals(x, domain, StringComparison.OrdinalIgnoreCase));
+
+        if (action == "add")
+        {
+            if (existing != null)
+            {
+                await command.RespondAsync($"`{domain}` is already configured for **{FormatPlatformName(platform)}**.", ephemeral: true);
+                return;
+            }
+            _providers[platform].Add(domain);
+            SaveProviders();
+            await command.RespondAsync($"✅ Added `{domain}` to **{FormatPlatformName(platform)}** providers.", ephemeral: true);
+            return;
+        }
+
+        if (existing == null)
+        {
+            await command.RespondAsync($"`{domain}` was not found for **{FormatPlatformName(platform)}**.", ephemeral: true);
+            return;
+        }
+
+        if (action == "remove")
+        {
+            _providers[platform].Remove(existing);
+            SaveProviders();
+            await command.RespondAsync($"✅ Removed `{existing}` from **{FormatPlatformName(platform)}** providers.", ephemeral: true);
+            return;
+        }
+
+        if (action is "move" or "primary")
+        {
+            int position = 1;
+            if (action == "move")
+            {
+                object? positionValue = actionOption.Options.FirstOrDefault(x => x.Name == "position")?.Value;
+                if (positionValue == null || !int.TryParse(positionValue.ToString(), out position) || position < 1 || position > _providers[platform].Count)
+                {
+                    await command.RespondAsync($"Position must be between **1** and **{_providers[platform].Count}**.", ephemeral: true);
+                    return;
+                }
+            }
+
+            _providers[platform].Remove(existing);
+            _providers[platform].Insert(position - 1, existing);
+            SaveProviders();
+            string order = string.Join("\n", _providers[platform].Select((p, i) => $"**{i + 1}.** `{p}`{(i == 0 ? " ← Primary / Auto" : string.Empty)}"));
+            await command.RespondAsync($"✅ Updated **{FormatPlatformName(platform)}** provider priority.\n\n{order}", ephemeral: true);
+            return;
+        }
+
+        await command.RespondAsync("❓ Unknown provider action.", ephemeral: true);
     }
 
     private async Task HandleUserSettingsSlashCommand(SocketSlashCommand command)
@@ -4835,13 +5020,14 @@ class Program
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
             "`!bot serverstats <serverId>` – Show detailed stats for one server",
+            "`!bot serversettings <serverId>` – Read-only view of a server\'s ApolloBot settings",
             "`!bot usersettings <UserID>` – Read-only view of a user's ApolloBot settings",
             "`!bot setembeds <number>` – Manually set the embeds fixed count",
             "`!bot setservicetime <duration>` – Manually set total service time",
             "",
             "**Bot Management**",
             "`!bot status <type> <status> <text>` – Change bot presence",
-            "`!bot provider ...` – Manage platform providers",
+            "`!bot provider ...` – Manage platform providers (add/remove/move/primary/list/clear)",
             "`!bot special ...` – Manage silly Twitter/X users",
             "`!bot update ...` – Manage public planned updates"
         };
@@ -4997,13 +5183,91 @@ class Program
         }
 
         string lines = string.Join("\n", top.Select((x, i) =>
-            $"**{i + 1}.** {x.ServerName} (`{x.GuildId}`) — **{x.EmbedFixCount}** fixes"));
+        {
+            string languageCode = _guildSettings.TryGetValue(x.GuildId, out GuildSettings? guildSettings)
+                ? guildSettings.LanguageCode
+                : LocalizationManager.DefaultLanguage;
+            string languageName = GetLanguageDisplayName(languageCode);
+
+            return $"**{i + 1}.** {x.ServerName} (`{x.GuildId}`) — **{x.EmbedFixCount}** fixes — 🌐 **{languageName}** (`{languageCode}`)";
+        }));
 
         var embed = new EmbedBuilder()
             .WithTitle("Top Servers by ApolloBot Usage")
             .WithDescription(lines)
             .WithColor(Color.DarkBlue)
             .WithCurrentTimestamp()
+            .Build();
+
+        await SendBotOwnerMessageAsync(channel, ownerUserId, embed: embed);
+    }
+
+    private async Task SendServerSettingsDiagnosticAsync(SocketTextChannel channel, ulong ownerUserId, string[] parts)
+    {
+        if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong guildId))
+        {
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Usage: `!bot serversettings <ServerID>`");
+            return;
+        }
+
+        SocketGuild? liveGuild = _client?.GetGuild(guildId);
+
+        // Read-only diagnostic: never create or modify a server settings profile.
+        if (!_guildSettings.TryGetValue(guildId, out GuildSettings? settings))
+        {
+            string serverName = liveGuild?.Name ?? "Unknown / unavailable server";
+
+            var noProfileEmbed = new EmbedBuilder()
+                .WithTitle("🔧 Server Settings")
+                .WithDescription($"**Server:** {serverName}\n**Server ID:** `{guildId}`")
+                .AddField("Settings Found", "❌ No saved server settings profile", false)
+                .AddField("Effective Status", "✅ ApolloBot will use the default server settings.", false)
+                .WithFooter("Read-only owner diagnostic")
+                .WithColor(Color.DarkPurple)
+                .Build();
+
+            await SendBotOwnerMessageAsync(channel, ownerUserId, embed: noProfileEmbed);
+            return;
+        }
+
+        string serverNameResolved = liveGuild?.Name ?? $"Server {guildId}";
+        string languageCode = settings.LanguageCode;
+        string languageName = GetLanguageDisplayName(languageCode);
+
+        string whitelist = settings.WhitelistedChannelIds.Count == 0
+            ? "None — ApolloBot can process supported links in any accessible channel."
+            : string.Join("\n", settings.WhitelistedChannelIds.Select(id =>
+            {
+                SocketGuildChannel? guildChannel = liveGuild?.GetChannel(id);
+                return guildChannel != null
+                    ? $"• **#{guildChannel.Name}** (`{id}`)"
+                    : $"• Unknown/unavailable channel (`{id}`)";
+            }));
+
+        if (whitelist.Length > 1024)
+            whitelist = $"{whitelist[..950]}…\n**{settings.WhitelistedChannelIds.Count} whitelisted channels total.**";
+
+        string disabledCommands = settings.DisabledUserCommands.Count == 0
+            ? "None"
+            : string.Join(", ", settings.DisabledUserCommands
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Select(x => $"`{x}`"));
+
+        if (disabledCommands.Length > 1024)
+            disabledCommands = $"{disabledCommands[..950]}…\n**{settings.DisabledUserCommands.Count} disabled commands total.**";
+
+        var embed = new EmbedBuilder()
+            .WithTitle("🔧 Server Settings")
+            .WithDescription($"**Server:** {serverNameResolved}\n**Server ID:** `{guildId}`")
+            .AddField("Automatic Embed Fixing", settings.Enabled ? "✅ Enabled" : "❌ Disabled", true)
+            .AddField("Silent Mode", settings.SilentMode ? "✅ Enabled" : "❌ Disabled", true)
+            .AddField("Provider Buttons", settings.ButtonsEnabled ? "✅ Enabled" : "❌ Disabled", true)
+            .AddField("Button Cooldown", $"{settings.ButtonCooldownSeconds} second(s)", true)
+            .AddField("Language", $"{languageName} (`{languageCode}`)", true)
+            .AddField("Disabled Commands", disabledCommands, false)
+            .AddField("Whitelisted Channels", whitelist, false)
+            .WithFooter("Read-only owner diagnostic")
+            .WithColor(Color.DarkPurple)
             .Build();
 
         await SendBotOwnerMessageAsync(channel, ownerUserId, embed: embed);
@@ -6605,7 +6869,10 @@ class Program
                 "instagram",
                 new List<string>
                 {
-                    "kkinstagram.com"
+                    "oginstagram.com",
+                    "instagramfix.com",
+                    "kkinstagram.com",
+                    "vxinstagram.com"
                 }
             },
             {
