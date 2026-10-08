@@ -65,10 +65,6 @@ class Program
     private readonly ConcurrentDictionary<string, string> _lastAnimalImageUrls = new(StringComparer.OrdinalIgnoreCase);
     private bool _slashCommandsRegistered = false;
     private int _topGgStatsLoopStarted = 0;
-    private readonly object _topGgReviewLock = new();
-    private double? _topGgReviewScore;
-    private int? _topGgReviewCount;
-    private DateTime? _topGgReviewUpdatedAtUtc;
     private long _embedsFixedCount = 0;
     private long _accumulatedUptimeSeconds = 0;
     private DateTime _sessionStartedAtUtc = DateTime.UtcNow;
@@ -285,9 +281,8 @@ class Program
             _slashCommandsRegistered = true;
         }
 
-        // Report the current server count and fetch the public Top.gg review summary as soon as Discord is ready.
+        // Report the current server count to Top.gg as soon as Discord is ready.
         await ReportTopGgStatsAsync();
-        await RefreshTopGgReviewSummaryAsync();
 
         // Ready can fire again after a reconnect, so only start one background reporter.
         if (Interlocked.Exchange(ref _topGgStatsLoopStarted, 1) == 0)
@@ -300,7 +295,6 @@ class Program
         {
             await Task.Delay(TimeSpan.FromMinutes(30));
             await ReportTopGgStatsAsync();
-            await RefreshTopGgReviewSummaryAsync();
         }
     }
 
@@ -342,73 +336,6 @@ class Program
         catch (Exception ex)
         {
             Console.WriteLine($"[TOP.GG] Server-count update failed: {ex.Message}");
-        }
-    }
-
-
-    private async Task RefreshTopGgReviewSummaryAsync()
-    {
-        string? topGgToken = Environment.GetEnvironmentVariable("TOPGG_V1_TOKEN")?.Trim();
-        if (string.IsNullOrWhiteSpace(topGgToken))
-            topGgToken = Environment.GetEnvironmentVariable("TOPGG_TOKEN")?.Trim();
-
-        if (string.IsNullOrWhiteSpace(topGgToken))
-        {
-            Console.WriteLine("[TOP.GG] TOPGG_V1_TOKEN/TOPGG_TOKEN is not set; skipping review-summary refresh.");
-            return;
-        }
-
-        try
-        {
-            // Top.gg API v1 returns the authenticated project's aggregate review score and count.
-            // Prefer TOPGG_V1_TOKEN so an older legacy stats token can remain untouched.
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://top.gg/api/v1/projects/@me");
-            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {topGgToken}");
-            request.Headers.TryAddWithoutValidation("Accept", "application/json");
-
-            using HttpResponseMessage response = await TopGgHttpClient.SendAsync(request);
-            string responseBody = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                string logBody = responseBody.Length > 300 ? responseBody[..300] : responseBody;
-                Console.WriteLine($"[TOP.GG] Review-summary refresh failed: {(int)response.StatusCode} {response.ReasonPhrase}. {logBody}");
-                return;
-            }
-
-            using JsonDocument document = JsonDocument.Parse(responseBody);
-            JsonElement root = document.RootElement;
-
-            if (!root.TryGetProperty("review", out JsonElement review) ||
-                !review.TryGetProperty("score", out JsonElement scoreElement) ||
-                !review.TryGetProperty("count", out JsonElement countElement))
-            {
-                Console.WriteLine("[TOP.GG] Review-summary response did not contain review.score and review.count.");
-                return;
-            }
-
-            if (!scoreElement.TryGetDouble(out double score) || !countElement.TryGetInt32(out int count))
-            {
-                Console.WriteLine("[TOP.GG] Review-summary response contained an invalid score or count.");
-                return;
-            }
-
-            score = Math.Clamp(score, 0d, 5d);
-            count = Math.Max(0, count);
-
-            lock (_topGgReviewLock)
-            {
-                _topGgReviewScore = score;
-                _topGgReviewCount = count;
-                _topGgReviewUpdatedAtUtc = DateTime.UtcNow;
-            }
-
-            Console.WriteLine($"[TOP.GG] Review summary updated: {score:0.##}/5 from {count} review(s).");
-        }
-        catch (Exception ex)
-        {
-            // Keep the last successful value instead of replacing it with fake/default review data.
-            Console.WriteLine($"[TOP.GG] Review-summary refresh failed: {ex.Message}");
         }
     }
 
@@ -6409,16 +6336,6 @@ class Program
         int serverCount = GetVisibleServerCount();
         int totalUsers = GetVisibleUserCount();
 
-        double? topGgReviewScore;
-        int? topGgReviewCount;
-        DateTime? topGgReviewUpdatedAtUtc;
-        lock (_topGgReviewLock)
-        {
-            topGgReviewScore = _topGgReviewScore;
-            topGgReviewCount = _topGgReviewCount;
-            topGgReviewUpdatedAtUtc = _topGgReviewUpdatedAtUtc;
-        }
-
         long embedsFixed;
         long currentSessionSeconds;
         long totalUptimeSeconds;
@@ -6450,9 +6367,6 @@ class Program
             TrackedUsageServers = _guildUsageStats.Count,
             Uptime = FormatDuration(TimeSpan.FromSeconds(totalUptimeSeconds)),
             PlatformCount = _providers.Count,
-            TopGgReviewScore = topGgReviewScore,
-            TopGgReviewCount = topGgReviewCount,
-            TopGgReviewUpdatedAtUtc = topGgReviewUpdatedAtUtc,
             TotalUptimeSeconds = totalUptimeSeconds,
             CurrentSessionSeconds = currentSessionSeconds,
             LongestSessionSeconds = longestSessionSeconds,
@@ -7135,9 +7049,6 @@ class PublicStatsPayload
     public int TrackedUsageServers { get; set; }
     public string Uptime { get; set; } = "";
     public int PlatformCount { get; set; }
-    public double? TopGgReviewScore { get; set; }
-    public int? TopGgReviewCount { get; set; }
-    public DateTime? TopGgReviewUpdatedAtUtc { get; set; }
     public long TotalUptimeSeconds { get; set; }
     public long CurrentSessionSeconds { get; set; }
     public long LongestSessionSeconds { get; set; }
