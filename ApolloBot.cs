@@ -2135,13 +2135,25 @@ class Program
         if (string.IsNullOrWhiteSpace(providerSummary))
             providerSummary = "No providers configured.";
 
-        string ignoredServers = settings.IgnoredGuildIds.Count == 0
-            ? "None"
-            : string.Join(", ", settings.IgnoredGuildIds.Select(id => $"`{id}`"));
+        string ignoredServers;
+        if (settings.IgnoredGuildIds.Count == 0)
+        {
+            ignoredServers = "✅ None — this user has not disabled automatic fixing in any specific server.";
+        }
+        else
+        {
+            ignoredServers = string.Join("\n", settings.IgnoredGuildIds.Select(id =>
+            {
+                SocketGuild? ignoredGuild = _client?.GetGuild(id);
+                return ignoredGuild != null
+                    ? $"❌ **{ignoredGuild.Name}** (`{id}`)"
+                    : $"❌ Unknown/unavailable server (`{id}`)";
+            }));
 
-        // Discord embed field values max out at 1024 characters.
-        if (ignoredServers.Length > 1024)
-            ignoredServers = $"{ignoredServers[..980]}…\n({settings.IgnoredGuildIds.Count} ignored servers total)";
+            // Discord embed field values max out at 1024 characters.
+            if (ignoredServers.Length > 1024)
+                ignoredServers = $"{ignoredServers[..950]}…\n**{settings.IgnoredGuildIds.Count} server-specific disable(s) total.**";
+        }
 
         var embed = new EmbedBuilder()
             .WithTitle("🔧 User Settings")
@@ -2156,7 +2168,7 @@ class Program
             .AddField("Preferred Providers", providerSummary, false)
             .AddField("Reply Notifications", settings.ReplyNotificationsEnabled ? "✅ Enabled" : "❌ Disabled", true)
             .AddField("Language", settings.LanguageCode, true)
-            .AddField("Ignored Server IDs", ignoredServers, false)
+            .AddField("Disabled In Specific Servers", ignoredServers, false)
             .AddField("Effective Status", $"{effectiveStatus}\n**Reason:** {effectiveReason}", false)
             .WithFooter("Read-only owner diagnostic")
             .WithColor(Color.DarkPurple)
