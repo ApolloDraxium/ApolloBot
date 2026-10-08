@@ -2097,9 +2097,24 @@ class Program
 
         if (_client != null)
         {
-            SocketUser? cachedUser = _client.GetUser(targetUserId);
-            if (cachedUser != null)
-                displayName = cachedUser.GlobalName ?? cachedUser.Username;
+            // GetUser only checks Discord.Net's local cache. If the user is not cached,
+            // ask Discord directly so the owner diagnostic can still show their name.
+            IUser? resolvedUser = _client.GetUser(targetUserId);
+
+            if (resolvedUser == null)
+            {
+                try
+                {
+                    resolvedUser = await _client.Rest.GetUserAsync(targetUserId);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[OWNER USERSETTINGS] Could not resolve user {targetUserId}: {ex.Message}");
+                }
+            }
+
+            if (resolvedUser != null)
+                displayName = resolvedUser.GlobalName ?? resolvedUser.Username;
         }
 
         bool ignoredHere = settings.IgnoreAllServers || settings.IgnoredGuildIds.Contains(channel.Guild.Id);
