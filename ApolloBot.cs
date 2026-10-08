@@ -863,6 +863,12 @@ class Program
             return;
         }
 
+        if (sub == "usersettings")
+        {
+            await HandleOwnerUserSettingsCommand(textChannel, message.Author.Id, parts);
+            return;
+        }
+
         if (sub == "provider")
         {
             await HandleProviderCommand(textChannel, message.Author.Id, parts);
@@ -1631,7 +1637,7 @@ class Program
             return;
         }
 
-        await SendBotHelp(textChannel, message.Author.Id);
+        await SendBotOwnerMessageAsync(textChannel, message.Author.Id, "❓ That command doesn't exist.");
     }
 
     private IEnumerable<SocketGuild> GetVisibleGuilds()
@@ -1881,7 +1887,7 @@ class Program
 
         if (parts.Length == 0)
         {
-            await SendApolloBotHelp(textChannel, message.Author);
+            await textChannel.SendMessageAsync("❓ That command doesn't exist.");
             return;
         }
 
@@ -1979,7 +1985,7 @@ class Program
         string[] adminCommands = { "on", "off", "silent", "togglebuttons", "cooldown", "reset", "whitelist" };
         if (!adminCommands.Contains(sub, StringComparer.OrdinalIgnoreCase))
         {
-            await textChannel.SendMessageAsync(L(settings, "errors.unrecognized_prefix"));
+            await textChannel.SendMessageAsync("❓ That command doesn't exist.");
             return;
         }
 
@@ -2059,7 +2065,104 @@ class Program
             return;
         }
 
-        await textChannel.SendMessageAsync(L(settings, "errors.unrecognized_prefix"));
+        await textChannel.SendMessageAsync("❓ That command doesn't exist.");
+    }
+
+    private async Task HandleOwnerUserSettingsCommand(SocketTextChannel channel, ulong ownerUserId, string[] parts)
+    {
+        if (parts.Length < 3 || !ulong.TryParse(parts[2], out ulong targetUserId))
+        {
+            await SendBotOwnerMessageAsync(channel, ownerUserId,
+                "Usage: `!bot usersettings <UserID>`");
+            return;
+        }
+
+        // Read-only diagnostic: never create or modify a user's settings profile.
+        if (!_userIgnoreSettings.TryGetValue(targetUserId, out UserIgnoreSettings? settings))
+        {
+            var noProfileEmbed = new EmbedBuilder()
+                .WithTitle("🔧 User Settings")
+                .WithDescription($"User ID: `{targetUserId}`")
+                .AddField("Settings Found", "❌ No saved user settings profile", false)
+                .AddField("Effective Status", "✅ ApolloBot will use default user settings.", false)
+                .WithFooter("Read-only owner diagnostic")
+                .WithColor(Color.DarkPurple)
+                .Build();
+
+            await SendBotOwnerMessageAsync(channel, ownerUserId, embed: noProfileEmbed);
+            return;
+        }
+
+        string displayName = targetUserId.ToString();
+
+        if (_client != null)
+        {
+            SocketUser? cachedUser = _client.GetUser(targetUserId);
+            if (cachedUser != null)
+                displayName = cachedUser.GlobalName ?? cachedUser.Username;
+        }
+
+        bool ignoredHere = settings.IgnoreAllServers || settings.IgnoredGuildIds.Contains(channel.Guild.Id);
+
+        string effectiveStatus;
+        string effectiveReason;
+
+        if (settings.IgnoreAllServers)
+        {
+            effectiveStatus = "❌ ApolloBot will NOT automatically fix this user's links.";
+            effectiveReason = "User has automatic embed fixing disabled everywhere.";
+        }
+        else if (settings.IgnoredGuildIds.Contains(channel.Guild.Id))
+        {
+            effectiveStatus = "❌ ApolloBot will NOT automatically fix this user's links in this server.";
+            effectiveReason = "User has automatic embed fixing disabled for this server.";
+        }
+        else
+        {
+            effectiveStatus = "✅ ApolloBot will automatically fix this user's supported links in this server.";
+            effectiveReason = "User has not disabled automatic embed fixing here.";
+        }
+
+        string providerSummary = string.Join("\n",
+            _providers.Keys.OrderBy(FormatPlatformName).Select(platform =>
+            {
+                string value = settings.PreferredProviders.TryGetValue(platform, out string? preferred)
+                    ? preferred
+                    : "Automatic";
+                return $"**{FormatPlatformName(platform)}:** {value}";
+            }));
+
+        if (string.IsNullOrWhiteSpace(providerSummary))
+            providerSummary = "No providers configured.";
+
+        string ignoredServers = settings.IgnoredGuildIds.Count == 0
+            ? "None"
+            : string.Join(", ", settings.IgnoredGuildIds.Select(id => $"`{id}`"));
+
+        // Discord embed field values max out at 1024 characters.
+        if (ignoredServers.Length > 1024)
+            ignoredServers = $"{ignoredServers[..980]}…\n({settings.IgnoredGuildIds.Count} ignored servers total)";
+
+        var embed = new EmbedBuilder()
+            .WithTitle("🔧 User Settings")
+            .WithDescription($"**User:** {displayName}\n**User ID:** `{targetUserId}`")
+            .AddField("Embed Fixing",
+                settings.IgnoreAllServers
+                    ? "❌ Disabled everywhere"
+                    : ignoredHere
+                        ? "❌ Disabled in this server"
+                        : "✅ Enabled in this server",
+                false)
+            .AddField("Preferred Providers", providerSummary, false)
+            .AddField("Reply Notifications", settings.ReplyNotificationsEnabled ? "✅ Enabled" : "❌ Disabled", true)
+            .AddField("Language", settings.LanguageCode, true)
+            .AddField("Ignored Server IDs", ignoredServers, false)
+            .AddField("Effective Status", $"{effectiveStatus}\n**Reason:** {effectiveReason}", false)
+            .WithFooter("Read-only owner diagnostic")
+            .WithColor(Color.DarkPurple)
+            .Build();
+
+        await SendBotOwnerMessageAsync(channel, ownerUserId, embed: embed);
     }
 
     private async Task SendUserSettingsAsync(SocketTextChannel channel, ulong userId, ulong guildId)
@@ -4705,6 +4808,7 @@ class Program
             "`!bot topservers` – Show most-used servers by embed fixes",
             "`!bot topservers remove <serverId>` – Remove a server from usage analytics",
             "`!bot serverstats <serverId>` – Show detailed stats for one server",
+            "`!bot usersettings <UserID>` – Read-only view of a user's ApolloBot settings",
             "`!bot setembeds <number>` – Manually set the embeds fixed count",
             "`!bot setservicetime <duration>` – Manually set total service time",
             "",
