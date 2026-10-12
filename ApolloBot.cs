@@ -603,8 +603,11 @@ class Program
         var ownerBotCommand = new SlashCommandBuilder()
             .WithName("bot")
             .WithDescription("ApolloBot owner controls")
-            .WithContextTypes(sharedCommandContexts)
-            .WithIntegrationTypes(sharedIntegrationTypes)
+            // SECURITY: Owner tooling must never be exposed through DMs or user installs.
+            // Discord permission visibility is only an extra UI barrier; IsBotOwner remains the real authorization check.
+            .WithContextTypes(guildContexts)
+            .WithIntegrationTypes(guildInstall)
+            .WithDefaultMemberPermissions(GuildPermission.Administrator)
             .AddOption(ownerProviderGroup);
 
         ApplicationCommandProperties[] commands = new ApplicationCommandProperties[]
