@@ -586,13 +586,13 @@ class Program
         SlashCommandOptionBuilder ProviderPlatformOption() =>
             new SlashCommandOptionBuilder().WithName("platform").WithDescription("Platform to manage").WithType(ApplicationCommandOptionType.String).WithRequired(true)
                 .AddChoice("Twitter / X", "twitter").AddChoice("Reddit", "reddit").AddChoice("TikTok", "tiktok").AddChoice("Instagram", "instagram")
-                .AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads");
+                .AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads").AddChoice("iFunny", "ifunny");
 
         var ownerProviderGroup = new SlashCommandOptionBuilder()
             .WithName("provider").WithDescription("Manage embed providers").WithType(ApplicationCommandOptionType.SubCommandGroup)
             .AddOption(new SlashCommandOptionBuilder().WithName("list").WithDescription("List provider priority").WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption(new SlashCommandOptionBuilder().WithName("platform").WithDescription("Platform (omit to list all)").WithType(ApplicationCommandOptionType.String).WithRequired(false)
-                    .AddChoice("Twitter / X", "twitter").AddChoice("Reddit", "reddit").AddChoice("TikTok", "tiktok").AddChoice("Instagram", "instagram").AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads")))
+                    .AddChoice("Twitter / X", "twitter").AddChoice("Reddit", "reddit").AddChoice("TikTok", "tiktok").AddChoice("Instagram", "instagram").AddChoice("Kick", "kick").AddChoice("Bluesky", "bluesky").AddChoice("Threads", "threads").AddChoice("iFunny", "ifunny")))
             .AddOption(new SlashCommandOptionBuilder().WithName("add").WithDescription("Add a provider").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption()))
             .AddOption(new SlashCommandOptionBuilder().WithName("remove").WithDescription("Remove a provider").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption()))
             .AddOption(new SlashCommandOptionBuilder().WithName("move").WithDescription("Move a provider to a priority position").WithType(ApplicationCommandOptionType.SubCommand).AddOption(ProviderPlatformOption()).AddOption(ProviderDomainOption())
@@ -3404,7 +3404,7 @@ class Program
 
             if (!_providers.TryGetValue(platform, out List<string>? listedProviders))
             {
-                await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, or threads.");
+                await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, threads, or ifunny.");
                 return;
             }
 
@@ -3423,7 +3423,7 @@ class Program
 
         if (!_providers.ContainsKey(targetPlatform))
         {
-            await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, or threads.");
+            await SendBotOwnerMessageAsync(channel, ownerUserId, "Invalid platform. Use twitter, reddit, tiktok, instagram, kick, bluesky, threads, or ifunny.");
             return;
         }
 
@@ -4072,7 +4072,7 @@ class Program
         if (detectedPlatforms.Count == 0)
         {
             await command.RespondAsync(
-                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Kick, Bluesky, Threads (experimental).",
+                "I couldn't find a supported link in that input. Supported platforms: Twitter/X, Reddit, TikTok, Instagram, Kick, Bluesky, Threads (experimental), iFunny.",
                 ephemeral: true);
             return;
         }
@@ -5766,6 +5766,7 @@ class Program
             "kick" => "Fix Embed",
             "bluesky" => "Fix Embed",
             "threads" => "Fix Embed (Exp)",
+            "ifunny" => "Fix Embed",
             _ => "Fix Embed"
         };
     }
@@ -5781,6 +5782,7 @@ class Program
             "kick" => "Kick",
             "bluesky" => "Bluesky",
             "threads" => "Threads",
+            "ifunny" => "iFunny",
             _ => platform
         };
     }
@@ -5823,6 +5825,9 @@ class Program
 
         if (ContainsThreadsLink(text))
             platforms.Add("threads");
+
+        if (ContainsIFunnyLink(text))
+            platforms.Add("ifunny");
 
         return platforms;
     }
@@ -5875,6 +5880,9 @@ class Program
 
         if (providerIndexes.ContainsKey("threads"))
             result = ReplaceThreadsLinks(result, providerIndexes["threads"], originalAuthorId);
+
+        if (providerIndexes.ContainsKey("ifunny"))
+            result = ReplaceIFunnyLinks(result, providerIndexes["ifunny"], originalAuthorId);
 
         return result;
     }
@@ -5959,6 +5967,14 @@ class Program
         return Regex.IsMatch(
             text,
             @"https?://(www\.)?threads\.com/@[^\s/]+/post/[A-Za-z0-9_-]+",
+            RegexOptions.IgnoreCase);
+    }
+
+    private bool ContainsIFunnyLink(string text)
+    {
+        return Regex.IsMatch(
+            text,
+            @"https?://(www\.)?ifunny\.co(/|$)",
             RegexOptions.IgnoreCase);
     }
 
@@ -6094,6 +6110,27 @@ class Program
         text = Regex.Replace(
             text,
             @"https?://(www\.)?bsky\.app",
+            $"https://{replacementDomain}",
+            RegexOptions.IgnoreCase);
+
+        return text;
+    }
+
+    private string ReplaceIFunnyLinks(string text, int providerIndex, ulong originalAuthorId)
+    {
+        List<string> ifunnyProviders = GetProvidersForPlatform("ifunny", originalAuthorId);
+
+        if (ifunnyProviders.Count == 0)
+            return text;
+
+        if (providerIndex < 0 || providerIndex >= ifunnyProviders.Count)
+            providerIndex = 0;
+
+        string replacementDomain = ifunnyProviders[providerIndex];
+
+        text = Regex.Replace(
+            text,
+            @"https?://(www\.)?ifunny\.co",
             $"https://{replacementDomain}",
             RegexOptions.IgnoreCase);
 
@@ -6899,6 +6936,13 @@ class Program
                 new List<string>
                 {
                     "fixthreads.seria.moe"
+                }
+            },
+            {
+                "ifunny",
+                new List<string>
+                {
+                    "ifunnyez.co"
                 }
             }
         };
